@@ -1,0 +1,43 @@
+# Сборка релиза по тегу vX.Y.Z: установщик, архивы для флешки, zip — в GitHub Releases
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Проверка синтаксиса shell
+        run: |
+          for f in opt/bin/* opt/etc/init.d/* opt/share/xkeen-happ/www/cgi-bin/api.cgi scripts/*.sh scripts/install.sh.in deploy-unix.sh; do
+            sh -n "$f"
+          done
+
+      - name: Версия совпадает с тегом
+        if: startsWith(github.ref, 'refs/tags/')
+        run: test "v$(cat VERSION)" = "${GITHUB_REF_NAME}"
+
+      - name: Сборка
+        run: sh scripts/build-release.sh
+
+      - name: Публикация
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/install.sh
+            dist/install-xkeen-sub.sh
+            dist/xkeen-happ-*.zip
+            dist/*-installer.tar.gz
+            dist/deploy-unix.sh
+            dist/deploy-windows.bat
+            dist/SHA256SUMS
+          body_path: dist/RELEASE_NOTES.md

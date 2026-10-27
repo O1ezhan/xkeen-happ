@@ -1,0 +1,1385 @@
+#!/bin/sh
+# ==============================================================================
+# xkeen-sub — Менеджер подписок в стиле Happ для роутеров Keenetic / Netcraze
+# Поддерживает:
+#   - Ссылки подписок (https://...) в формате Base64 / Plaintext + заголовки Happ
+#     (profile-title, subscription-userinfo, profile-update-interval, support-url)
+#   - Одиночные и множественные ссылки: vless://, vmess://, trojan://, ss://, hy2://
+#   - Транспорты: xhttp, ws, grpc, tcp, raw, httpupgrade, kcp, hysteria2
+#   - Безопасность: reality (x25519 / mlkem768 / spiderX), tls, flow (vision)
+#   - Режимы выбора сервера:
+#       * auto   — Умный выбор (burstObservatory + leastPing + совместимость с xkeen -sb)
+#       * manual — Ручная фиксация выбранного сервера из списка подписки
+#   - Режимы маршрутизации:
+#       * blocked   — 🔒 Только заблокированные в РФ (по базам zkeen + пользовательский список)
+#       * except_ru — 🇷🇺 Весь трафик через VPN, кроме РФ (.ru, .рф, Госуслуги, Яндекс, ВК)
+#       * full      — 🌐 Весь трафик через VPN
+#   - Ежесуточное автообновление по cron (0 4 * * *) и при старте роутера
+# ==============================================================================
+
+export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
+# Побайтовая работа awk (base64, %XX): в UTF-8-локали gawk превращает байт 0xD0 в символ U+00D0
+export LC_ALL=C
+
+OPT_DIR="${XKEEN_OPT_DIR:-/opt}"
+HAPP_CONF_DIR="${XKEEN_HAPP_CONF_DIR:-$OPT_DIR/etc/xkeen-happ}"
+XRAY_CONF_DIR="${XKEEN_XRAY_CONF_DIR:-$OPT_DIR/etc/xray/configs}"
+CRON_DIR="${XKEEN_CRON_DIR:-$OPT_DIR/var/spool/cron/crontabs}"
+CRON_FILE="$CRON_DIR/root"
+LOG_DIR="${XKEEN_LOG_DIR:-$OPT_DIR/var/log}"
+HAPP_LOG="$LOG_DIR/xkeen-happ.log"
+
+CONFIG_FILE="$HAPP_CONF_DIR/config.json"
+STATE_FILE="$HAPP_CONF_DIR/state.json"
+RAW_SUB_CACHE="$HAPP_CONF_DIR/last_subscription.txt"
+
+OUTBOUNDS_FILE="$XRAY_CONF_DIR/04_outbounds.json"
+ROUTING_FILE="$XRAY_CONF_DIR/05_routing.json"
+OBSERVATORY_FILE="$XRAY_CONF_DIR/07_observatory.json"
+
+mkdir -p "$HAPP_CONF_DIR" "$XRAY_CONF_DIR" "$CRON_DIR" "$LOG_DIR" 2>/dev/null
+
+DEFAULT_UA="Happ/3.9.2"
+CRON_RE='^[0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+ [0-9*/,-]+$'
+
+# Один процесс за раз: cron, панель и консоль не должны писать конфиги одновременно
+take_lock() {
+    if command -v flock >/dev/null 2>&1; then
+        exec 9>"/tmp/xkeen-happ.lock"
+        flock -w 90 9 || { log_msg "Не дождались блокировки /tmp/xkeen-happ.lock"; return 1; }
+        return 0
+    fi
+    # Без flock — каталог-замок; брошенный (старше 5 минут) снимаем
+    lockdir="/tmp/xkeen-happ.lockdir"
+    n=0
+    until mkdir "$lockdir" 2>/dev/null; do
+        if [ -n "$(find "$lockdir" -maxdepth 0 -mmin +5 2>/dev/null)" ]; then
+            rmdir "$lockdir" 2>/dev/null
+            continue
+        fi
+        n=$((n + 1))
+        [ "$n" -ge 90 ] && { log_msg "Не дождались блокировки $lockdir"; return 1; }
+        sleep 1
+    done
+    trap 'rmdir "$lockdir" 2>/dev/null' EXIT INT TERM
+}
+
+# Ссылка подписки — это секрет: в журнал пишем только схему и хост
+mask_url() {
+    printf '%s' "$1" | sed -E 's#^([a-zA-Z0-9]+://[^/?#]+).*#\1/***#'
+}
+
+# Модель и версия прошивки — для заголовков x-device-model / x-ver-os
+rci_show_version() {
+    tkn=$(jq -r '.rci_token // empty' "$CONFIG_FILE" 2>/dev/null)
+    [ -z "$tkn" ] && [ -f "$OPT_DIR/etc/xkeen/xkeen.json" ] && \
+        tkn=$(sed -n 's/.*"rci_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$OPT_DIR/etc/xkeen/xkeen.json" | head -n 1)
+    curl --connect-timeout 2 -m 4 -fsS ${tkn:+-H "X-Ndma-Tkn: $tkn"} "http://127.0.0.1:79/rci/show/version" 2>/dev/null
+}
+
+log_msg() {
+    ts="$(date '+%Y-%m-%d %H:%M:%S')"
+    printf '%s  %s\n' "$ts" "$1" >> "$HAPP_LOG" 2>/dev/null
+    if [ -f "$HAPP_LOG" ]; then
+        tail -n 300 "$HAPP_LOG" > "$HAPP_LOG.tmp.$$" 2>/dev/null && mv "$HAPP_LOG.tmp.$$" "$HAPP_LOG" 2>/dev/null
+    fi
+}
+
+generate_hwid() {
+    mac=""
+    if [ -r /sys/class/net/br0/address ]; then
+        mac=$(tr -d ':' < /sys/class/net/br0/address 2>/dev/null | tr 'a-f' 'A-F')
+    elif [ -r /sys/class/net/eth0/address ]; then
+        mac=$(tr -d ':' < /sys/class/net/eth0/address 2>/dev/null | tr 'a-f' 'A-F')
+    fi
+    if [ -n "$mac" ] && [ "${#mac}" -ge 12 ]; then
+        printf 'KEEN%s' "$mac"
+    else
+        printf '7F3A0000000000E1'
+    fi
+}
+
+ensure_config() {
+    if [ -f "$CONFIG_FILE" ] && ! jq -e . "$CONFIG_FILE" >/dev/null 2>&1; then
+        bad="$CONFIG_FILE.broken-$(date +%Y%m%d%H%M%S)"
+        mv "$CONFIG_FILE" "$bad"
+        log_msg "config.json повреждён, сохранён как $bad; созданы настройки по умолчанию"
+    fi
+    if [ ! -f "$CONFIG_FILE" ]; then
+        hwid="$(generate_hwid)"
+        cat <<INNER_CFG > "$CONFIG_FILE"
+{
+  "sub_url": "",
+  "manual_links": "",
+  "routing_mode": "blocked",
+  "selection_mode": "auto",
+  "selected_tag": "proxy-1",
+  "auto_update": true,
+  "update_cron": "0 4 * * *",
+  "custom_vpn_domains": "2ip.ru, 2ip.io",
+  "custom_direct_domains": "",
+  "block_ads": false,
+  "block_quic": false,
+  "discord_voice": true,
+  "ui_port": 8099,
+  "user_agent": "$DEFAULT_UA",
+  "hwid": "$hwid"
+}
+INNER_CFG
+    fi
+    if [ ! -f "$STATE_FILE" ] || ! jq -e . "$STATE_FILE" >/dev/null 2>&1; then
+        cat <<'INNER_STATE' > "$STATE_FILE"
+{
+  "profile_title": "Подписка не подключена",
+  "upload_bytes": 0,
+  "download_bytes": 0,
+  "total_bytes": 0,
+  "expire_ts": 0,
+  "support_url": "",
+  "last_updated": "Никогда",
+  "last_status": "idle",
+  "last_error": "",
+  "server_count": 0,
+  "servers": []
+}
+INNER_STATE
+    fi
+}
+
+decode_base64() {
+    awk '
+    BEGIN {
+        b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        for (i = 0; i < 64; i++) val[substr(b64, i + 1, 1)] = i
+    }
+    {
+        gsub(/[ \t\r\n]/, "", $0)
+        gsub(/-/, "+", $0)
+        gsub(/_/, "/", $0)
+        buf = buf $0
+    }
+    END {
+        while ((length(buf) % 4) != 0) buf = buf "="
+        n = length(buf)
+        for (i = 1; i <= n; i += 4) {
+            c1 = substr(buf, i, 1)
+            c2 = substr(buf, i + 1, 1)
+            c3 = substr(buf, i + 2, 1)
+            c4 = substr(buf, i + 3, 1)
+            v1 = (c1 in val) ? val[c1] : 0
+            v2 = (c2 in val) ? val[c2] : 0
+            v3 = (c3 in val) ? val[c3] : 0
+            v4 = (c4 in val) ? val[c4] : 0
+            b1 = (v1 * 4) + int(v2 / 16)
+            b2 = ((v2 % 16) * 16) + int(v3 / 4)
+            b3 = ((v3 % 4) * 64) + v4
+            printf "%c", b1
+            if (c3 != "=") printf "%c", b2
+            if (c4 != "=") printf "%c", b3
+        }
+    }'
+}
+
+decode_header_value() {
+    raw_val="$1"
+    raw_val=$(printf '%s' "$raw_val" | sed 's/^[[:space:]]*//; s/[[:space:]\r]*$//')
+    case "$raw_val" in
+        base64:*|BASE64:*)
+            b64_part="${raw_val#*:}"
+            printf '%s' "$b64_part" | decode_base64
+            ;;
+        *)
+            printf '%s' "$raw_val" | awk '
+            BEGIN {
+                for (i = 0; i < 256; i++) hex[sprintf("%02X", i)] = i
+                for (i = 0; i < 256; i++) hex[sprintf("%02x", i)] = i
+            }
+            {
+                s = $0; out = ""; i = 1; n = length(s)
+                while (i <= n) {
+                    c = substr(s, i, 1)
+                    if (c == "%" && i + 2 <= n) {
+                        h = substr(s, i + 1, 2)
+                        if (h in hex) {
+                            out = out sprintf("%c", hex[h])
+                            i += 3
+                            continue
+                        }
+                    }
+                    out = out c
+                    i++
+                }
+                printf "%s", out
+            }'
+            ;;
+    esac
+}
+
+parse_uris_to_json() {
+    awk '
+    BEGIN {
+        for (i = 0; i < 256; i++) {
+            hex[sprintf("%02X", i)] = i
+            hex[sprintf("%02x", i)] = i
+        }
+        b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        for (i = 0; i < 64; i++) b64val[substr(b64chars, i + 1, 1)] = i
+        for (i = 1; i < 32; i++) ord[sprintf("%c", i)] = i
+        idx = 0
+    }
+
+    function urldecode(s,   out, i, n, c, h) {
+        out = ""; i = 1; n = length(s)
+        while (i <= n) {
+            c = substr(s, i, 1)
+            if (c == "+") {
+                out = out " "
+                i++
+            } else if (c == "%" && i + 2 <= n) {
+                h = substr(s, i + 1, 2)
+                if (h in hex) {
+                    out = out sprintf("%c", hex[h])
+                    i += 3
+                    continue
+                }
+                out = out c
+                i++
+            } else {
+                out = out c
+                i++
+            }
+        }
+        return out
+    }
+
+    function b64decode(s,   out, i, n, c1, c2, c3, c4, v1, v2, v3, v4, b1, b2, b3) {
+        gsub(/[ \t\r\n]/, "", s)
+        gsub(/-/, "+", s)
+        gsub(/_/, "/", s)
+        while ((length(s) % 4) != 0) s = s "="
+        out = ""; n = length(s)
+        for (i = 1; i <= n; i += 4) {
+            c1 = substr(s, i, 1); c2 = substr(s, i + 1, 1)
+            c3 = substr(s, i + 2, 1); c4 = substr(s, i + 3, 1)
+            v1 = (c1 in b64val) ? b64val[c1] : 0
+            v2 = (c2 in b64val) ? b64val[c2] : 0
+            v3 = (c3 in b64val) ? b64val[c3] : 0
+            v4 = (c4 in b64val) ? b64val[c4] : 0
+            b1 = (v1 * 4) + int(v2 / 16)
+            b2 = ((v2 % 16) * 16) + int(v3 / 4)
+            b3 = ((v3 % 4) * 64) + v4
+            out = out sprintf("%c", b1)
+            if (c3 != "=") out = out sprintf("%c", b2)
+            if (c4 != "=") out = out sprintf("%c", b3)
+        }
+        return out
+    }
+
+    function jesc(s,   out, i, n, c) {
+        out = ""
+        n = length(s)
+        for (i = 1; i <= n; i++) {
+            c = substr(s, i, 1)
+            if (c == "\\") out = out "\\\\"
+            else if (c == "\"") out = out "\\\""
+            else if (c == "\n") out = out "\\n"
+            else if (c == "\r") out = out "\\r"
+            else if (c == "\t") out = out "\\t"
+            else if (c < " ") out = out sprintf("\\u%04x", ord[c])
+            else out = out c
+        }
+        return out
+    }
+
+    {
+        gsub(/^[ \t\r]+|[ \t\r]+$/, "", $0)
+        if ($0 == "" || substr($0, 1, 1) == "#") next
+        line = $0
+
+        proto = ""
+        if (line ~ /^vless:\/\//) proto = "vless"
+        else if (line ~ /^trojan:\/\//) proto = "trojan"
+        else if (line ~ /^vmess:\/\//) proto = "vmess"
+        else if (line ~ /^ss:\/\//) proto = "ss"
+        else if (line ~ /^(hysteria2|hy2):\/\//) proto = "hysteria2"
+        if (proto == "") next
+
+        idx++
+        tag = "proxy-" idx
+
+        if (proto == "vmess") {
+            b64 = substr(line, 9)
+            raw_json = b64decode(b64)
+            printf "{\"_kind\":\"vmess\",\"tag\":\"%s\",\"raw\":\"%s\"}\n", tag, jesc(raw_json)
+            next
+        }
+
+        hash_pos = index(line, "#")
+        if (hash_pos > 0) {
+            name = urldecode(substr(line, hash_pos + 1))
+            rest = substr(line, 1, hash_pos - 1)
+        } else {
+            name = ""
+            rest = line
+        }
+
+        sep_pos = index(rest, "://")
+        rest = substr(rest, sep_pos + 3)
+
+        q_pos = index(rest, "?")
+        if (q_pos > 0) {
+            query = substr(rest, q_pos + 1)
+            authority = substr(rest, 1, q_pos - 1)
+        } else {
+            query = ""
+            authority = rest
+        }
+        sub(/\/$/, "", authority)
+
+        if (proto == "ss") {
+            method = ""; password = ""; host = ""; port = 443
+            at_pos = index(authority, "@")
+            if (at_pos > 0) {
+                uinfo = substr(authority, 1, at_pos - 1)
+                hostport = substr(authority, at_pos + 1)
+                if (index(uinfo, ":") == 0) {
+                    uinfo = b64decode(uinfo)
+                } else {
+                    uinfo = urldecode(uinfo)
+                }
+                c_pos = index(uinfo, ":")
+                method = substr(uinfo, 1, c_pos - 1)
+                password = substr(uinfo, c_pos + 1)
+            } else {
+                decoded = b64decode(authority)
+                at_pos = index(decoded, "@")
+                uinfo = substr(decoded, 1, at_pos - 1)
+                hostport = substr(decoded, at_pos + 1)
+                c_pos = index(uinfo, ":")
+                method = substr(uinfo, 1, c_pos - 1)
+                password = substr(uinfo, c_pos + 1)
+            }
+            c_pos = index(hostport, ":")
+            if (c_pos > 0) {
+                host = substr(hostport, 1, c_pos - 1)
+                port = substr(hostport, c_pos + 1) + 0
+            } else {
+                host = hostport
+            }
+            if (name == "") name = "SS " host ":" port
+            printf "{\"_kind\":\"ss\",\"tag\":\"%s\",\"name\":\"%s\",\"host\":\"%s\",\"port\":%d,\"method\":\"%s\",\"password\":\"%s\"}\n", \
+                tag, jesc(name), jesc(host), port, jesc(method), jesc(password)
+            next
+        }
+
+        at_pos = index(authority, "@")
+        user = urldecode(substr(authority, 1, at_pos - 1))
+        hostport = substr(authority, at_pos + 1)
+
+        if (substr(hostport, 1, 1) == "[") {
+            b_pos = index(hostport, "]:")
+            if (b_pos > 0) {
+                host = substr(hostport, 2, b_pos - 2)
+                port = substr(hostport, b_pos + 2) + 0
+            } else {
+                host = substr(hostport, 2, length(hostport) - 2)
+                port = 443
+            }
+        } else {
+            c_pos = index(hostport, ":")
+            if (c_pos > 0) {
+                host = substr(hostport, 1, c_pos - 1)
+                port = substr(hostport, c_pos + 1) + 0
+            } else {
+                host = hostport
+                port = 443
+            }
+        }
+        if (port <= 0) port = 443
+        if (name == "") name = toupper(proto) " " host ":" port
+
+        n_q = split(query, qparts, "&")
+        p_json = "{"
+        p_first = 1
+        for (i = 1; i <= n_q; i++) {
+            if (qparts[i] == "") continue
+            eq = index(qparts[i], "=")
+            if (eq > 0) {
+                k = tolower(substr(qparts[i], 1, eq - 1))
+                v = urldecode(substr(qparts[i], eq + 1))
+            } else {
+                k = tolower(qparts[i])
+                v = ""
+            }
+            if (!p_first) p_json = p_json ","
+            p_first = 0
+            p_json = p_json "\"" jesc(k) "\":\"" jesc(v) "\""
+        }
+        p_json = p_json "}"
+
+        printf "{\"_kind\":\"%s\",\"tag\":\"%s\",\"name\":\"%s\",\"user\":\"%s\",\"host\":\"%s\",\"port\":%d,\"params\":%s}\n", \
+            proto, tag, jesc(name), jesc(user), jesc(host), port, p_json
+    }' | jq -s '
+    def clean_empty:
+      walk(
+        if type == "object" then
+          with_entries(select(.value != null and .value != "" and .value != {} and .value != []))
+        else . end
+      );
+
+    def build_stream($type; $p):
+      ($type // "tcp" | if . == "splithttp" then "xhttp" else . end) as $net |
+      ($p.security // "none") as $sec |
+      (try ($p.extra | fromjson) catch null) as $extra_parsed |
+      (if $extra_parsed != null then $extra_parsed
+       elif ($p["x_padding_bytes"] // $p["xpaddingbytes"] // "") != "" then
+         { mode: ($p.mode // "auto"), xPaddingBytes: ($p["x_padding_bytes"] // $p["xpaddingbytes"]) }
+       else null end) as $xhttp_extra |
+      {
+        network: $net,
+        security: (if $sec == "none" or $sec == "" then null else $sec end),
+        tlsSettings: (
+          if $sec == "tls" then {
+            fingerprint: ($p.fp // "chrome"),
+            serverName: ($p.sni // $p.host // null),
+            alpn: (if ($p.alpn // "") != "" then ($p.alpn | split(",")) else null end),
+            allowInsecure: (if ($p.allowinsecure == "1" or $p.allowinsecure == "true" or $p.insecure == "1" or $p.insecure == "true") then true else null end)
+          } else null end
+        ),
+        realitySettings: (
+          if $sec == "reality" then {
+            fingerprint: ($p.fp // "chrome"),
+            serverName: ($p.sni // ""),
+            publicKey: ($p.pbk // ""),
+            shortId: ($p.sid // ""),
+            spiderX: ($p.spx // null),
+            mldsa65Verify: ($p.pqv // null)
+          } else null end
+        ),
+        tcpSettings: (
+          if $net == "tcp" and ($p.headertype // "") != "" and $p.headertype != "none" then
+            { header: { type: $p.headertype } }
+          else null end
+        ),
+        rawSettings: (
+          if $net == "raw" and ($p.headertype // "") != "" and $p.headertype != "none" then
+            { header: { type: $p.headertype } }
+          else null end
+        ),
+        xhttpSettings: (
+          if $net == "xhttp" then {
+            host: ($p.host // null),
+            path: ($p.path // "/"),
+            mode: ($p.mode // "auto"),
+            extra: $xhttp_extra
+          } else null end
+        ),
+        wsSettings: (
+          if $net == "ws" then {
+            path: ($p.path // "/"),
+            host: ($p.host // null)
+          } else null end
+        ),
+        grpcSettings: (
+          if $net == "grpc" then {
+            serviceName: ($p.servicename // $p.path // ""),
+            authority: ($p.authority // null),
+            multiMode: (if $p.mode == "multi" then true else null end)
+          } else null end
+        ),
+        httpupgradeSettings: (
+          if $net == "httpupgrade" then {
+            path: ($p.path // "/"),
+            host: ($p.host // null)
+          } else null end
+        )
+      } | clean_empty;
+
+    reduce .[] as $item (
+      { outbounds: [], servers: [] };
+      if $item._kind == "vless" then
+        ($item.params.type // "tcp" | if . == "splithttp" then "xhttp" else . end) as $net |
+        ({
+          tag: $item.tag,
+          protocol: "vless",
+          settings: ({
+            address: $item.host,
+            port: $item.port,
+            id: $item.user,
+            encryption: ($item.params.encryption // "none"),
+            flow: ($item.params.flow // null)
+          } | clean_empty),
+          streamSettings: build_stream($net; $item.params)
+        }) as $ob |
+        .outbounds += [$ob] |
+        .servers += [{
+          tag: $item.tag,
+          name: $item.name,
+          protocol: "vless",
+          network: $net,
+          security: ($item.params.security // "none"),
+          address: $item.host,
+          port: $item.port,
+          sni: ($item.params.sni // $item.params.host // ""),
+          ping_ms: null,
+          alive: true
+        }]
+      elif $item._kind == "trojan" then
+        ($item.params.type // "tcp") as $net |
+        ($item.params + { security: ($item.params.security // "tls") }) as $p |
+        ({
+          tag: $item.tag,
+          protocol: "trojan",
+          settings: {
+            address: $item.host,
+            port: $item.port,
+            password: $item.user
+          },
+          streamSettings: build_stream($net; $p)
+        }) as $ob |
+        .outbounds += [$ob] |
+        .servers += [{
+          tag: $item.tag,
+          name: $item.name,
+          protocol: "trojan",
+          network: $net,
+          security: ($p.security // "tls"),
+          address: $item.host,
+          port: $item.port,
+          sni: ($p.sni // ""),
+          ping_ms: null,
+          alive: true
+        }]
+      elif $item._kind == "ss" then
+        ({
+          tag: $item.tag,
+          protocol: "shadowsocks",
+          settings: {
+            address: $item.host,
+            port: $item.port,
+            method: $item.method,
+            password: $item.password
+          }
+        }) as $ob |
+        .outbounds += [$ob] |
+        .servers += [{
+          tag: $item.tag,
+          name: $item.name,
+          protocol: "shadowsocks",
+          network: "tcp",
+          security: "ss",
+          address: $item.host,
+          port: $item.port,
+          sni: "",
+          ping_ms: null,
+          alive: true
+        }]
+      elif $item._kind == "vmess" and (($item.raw | fromjson? // null) | type) == "object" then
+        ($item.raw | fromjson) as $r |
+        ($r.net // "tcp") as $net |
+        (if $r.tls == "tls" then "tls" else "none" end) as $sec |
+        ({
+          security: $sec,
+          sni: ($r.sni // $r.host // ""),
+          fp: ($r.fp // "chrome"),
+          alpn: ($r.alpn // ""),
+          path: ($r.path // "/"),
+          host: ($r.host // ""),
+          servicename: ($r.path // "")
+        }) as $p |
+        ({
+          tag: $item.tag,
+          protocol: "vmess",
+          settings: {
+            address: $r.add,
+            port: (($r.port | tonumber?) // 0),
+            id: $r.id,
+            alterId: ((($r.aid // 0) | tonumber?) // 0),
+            security: ($r.scy // "auto")
+          },
+          streamSettings: build_stream($net; $p)
+        }) as $ob |
+        .outbounds += [$ob] |
+        .servers += [{
+          tag: $item.tag,
+          name: ($r.ps // ("VMess " + $r.add)),
+          protocol: "vmess",
+          network: $net,
+          security: $sec,
+          address: $r.add,
+          port: (($r.port | tonumber?) // 0),
+          sni: ($p.sni // ""),
+          ping_ms: null,
+          alive: true
+        }]
+      elif $item._kind == "hysteria2" then
+        ($item.params + { security: ($item.params.security // "tls") }) as $p |
+        (build_stream("hysteria"; $p) * {
+          hysteriaSettings: {
+            auth: $item.user,
+            version: 2
+          }
+        }) as $ss |
+        ({
+          tag: $item.tag,
+          protocol: "hysteria",
+          settings: {
+            address: $item.host,
+            port: $item.port,
+            version: 2
+          },
+          streamSettings: $ss
+        }) as $ob |
+        .outbounds += [$ob] |
+        .servers += [{
+          tag: $item.tag,
+          name: $item.name,
+          protocol: "hysteria2",
+          network: "UDP/QUIC",
+          security: "tls",
+          address: $item.host,
+          port: $item.port,
+          sni: ($p.sni // ""),
+          ping_ms: null,
+          alive: true
+        }]
+      else . end
+    )
+    # Адрес и порт из подписки попадают в curl (замер пинга) и в Xray — только корректные
+    | ([.servers[] | select(
+          ((.address | type) == "string")
+          and (.address | length > 0 and length <= 253)
+          and (.address | explode | all(. as $c | ($c >= 48 and $c <= 58) or ($c >= 65 and $c <= 90) or ($c >= 97 and $c <= 122) or $c == 45 or $c == 46))
+          and (.address | startswith("-") | not)
+          and ((.port | type) == "number") and .port >= 1 and .port <= 65535
+        ) | .tag]) as $ok
+    | .outbounds |= map(select(.tag as $t | $ok | index($t)))
+    | .servers |= map(select(.tag as $t | $ok | index($t)))'
+}
+
+apply_xray_configs() {
+    ensure_config
+    parsed_json="$1"
+
+    if [ -n "$parsed_json" ]; then
+        outbounds_arr=$(printf '%s' "$parsed_json" | jq '.outbounds')
+    elif [ -f "$OUTBOUNDS_FILE" ]; then
+        outbounds_arr=$(jq '[.outbounds[] | select(.tag != "direct" and .tag != "block")]' "$OUTBOUNDS_FILE" 2>/dev/null || echo "[]")
+    else
+        outbounds_arr="[]"
+    fi
+
+    srv_count=$(printf '%s' "$outbounds_arr" | jq 'length')
+    if [ "${srv_count:-0}" -eq 0 ]; then
+        log_msg "Нет активных серверов для генерации конфигурации Xray"
+        return 1
+    fi
+
+    # Черновик: копия всех конфигов XKeen, в которой меняются только наши файлы
+    stage="$XRAY_CONF_DIR/.stage.$$"
+    rm -rf "$stage"
+    mkdir -p "$stage"
+    for f in "$XRAY_CONF_DIR"/*.json; do
+        [ -f "$f" ] && cp "$f" "$stage/"
+    done
+
+    printf '%s' "$outbounds_arr" | jq '{
+      outbounds: (. + [
+        {
+          tag: "direct",
+          protocol: "freedom"
+        },
+        {
+          tag: "block",
+          protocol: "blackhole",
+          settings: {
+            response: {
+              type: "http"
+            }
+          }
+        }
+      ])
+    }' > "$stage/04_outbounds.json"
+
+    routing_mode=$(jq -r '.routing_mode // "blocked"' "$CONFIG_FILE")
+    selection_mode=$(jq -r '.selection_mode // "auto"' "$CONFIG_FILE")
+    selected_tag=$(jq -r '.selected_tag // "proxy-1"' "$CONFIG_FILE")
+    custom_vpn=$(jq -r '.custom_vpn_domains // "2ip.ru, 2ip.io"' "$CONFIG_FILE")
+    custom_direct=$(jq -r '.custom_direct_domains // ""' "$CONFIG_FILE")
+    block_ads=$(jq -r '.block_ads // false' "$CONFIG_FILE")
+    block_quic=$(jq -r '.block_quic // false' "$CONFIG_FILE")
+    discord_voice=$(jq -r '.discord_voice // true' "$CONFIG_FILE")
+    presets_json=$(jq -c '.presets // [] | if type == "array" then . else [] end' "$CONFIG_FILE")
+
+    tag_exists=$(printf '%s' "$outbounds_arr" | jq --arg t "$selected_tag" '[.[] | select(.tag == $t)] | length')
+    if [ "${tag_exists:-0}" -eq 0 ]; then
+        selected_tag=$(printf '%s' "$outbounds_arr" | jq -r '.[0].tag // "proxy-1"')
+        jq --arg t "$selected_tag" '.selected_tag = $t' "$CONFIG_FILE" > "$CONFIG_FILE.tmp.$$" && mv "$CONFIG_FILE.tmp.$$" "$CONFIG_FILE"
+    fi
+
+    use_balancer="false"
+    if [ "$selection_mode" = "auto" ] && [ "$srv_count" -ge 2 ]; then
+        use_balancer="true"
+        cat <<'INNER_OBS' > "$stage/07_observatory.json"
+{
+  "burstObservatory": {
+    "subjectSelector": [
+      "proxy-"
+    ],
+    "pingConfig": {
+      "destination": "https://www.gstatic.com/generate_204",
+      "interval": "1m",
+      "connectivity": "http://connectivitycheck.platform.hicloud.com/generate_204",
+      "timeout": "5s",
+      "sampling": 3
+    }
+  }
+}
+INNER_OBS
+    else
+        rm -f "$stage/07_observatory.json"
+    fi
+
+    has_zkeen="true"
+    if [ "${XKEEN_FORCE_NO_GEO:-0}" = "1" ]; then
+        has_zkeen="false"
+    fi
+
+    jq -n \
+        --arg mode "$routing_mode" \
+        --arg use_bal "$use_balancer" \
+        --arg sel_tag "$selected_tag" \
+        --arg cvpn "$custom_vpn" \
+        --arg cdir "$custom_direct" \
+        --arg bads "$block_ads" \
+        --arg bquic "$block_quic" \
+        --arg dvoice "$discord_voice" \
+        --argjson presets "${presets_json:-[]}" \
+        --arg has_api "$([ -f "$XRAY_CONF_DIR/00_api.json" ] && echo true || echo false)" \
+        --arg has_geo "$has_zkeen" '
+    # jq в Entware собран без регулярных выражений: test/sub/gsub недоступны
+    def trimws: explode | . as $c | (map(. > 32) | index(true)) as $a
+      | if $a == null then "" else ($c | reverse | map(. > 32) | index(true)) as $b | $c[$a:(length - $b)] | implode end;
+
+    def split_domains($s):
+      ($s | split(",") | map(trimws) | map(select(length > 0)));
+
+    def vpn_target:
+      if $use_bal == "true" then { balancerTag: "balancer" }
+      else { outboundTag: $sel_tag } end;
+
+    # Готовые наборы сайтов, которые всегда идут через VPN (галочки в панели)
+    {
+      ai: ["openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com", "anthropic.com", "claude.ai", "claude.com",
+           "gemini.google.com", "aistudio.google.com", "generativelanguage.googleapis.com", "notebooklm.google.com",
+           "perplexity.ai", "x.ai", "grok.com", "copilot.microsoft.com", "mistral.ai", "midjourney.com", "elevenlabs.io"],
+      social: ["instagram.com", "cdninstagram.com", "facebook.com", "facebook.net", "fbcdn.net", "messenger.com", "threads.net",
+               "x.com", "twitter.com", "twimg.com", "t.co", "linkedin.com", "licdn.com", "whatsapp.com", "whatsapp.net", "signal.org"],
+      games: ["discord.com", "discord.gg", "discordapp.com", "discordapp.net", "discord.media", "roblox.com", "rbxcdn.com", "roblox.cn"],
+      streaming: ["youtube.com", "googlevideo.com", "ytimg.com", "youtu.be", "netflix.com", "nflxvideo.net", "nflximg.net", "nflxext.com",
+                  "spotify.com", "scdn.co", "spotifycdn.com", "twitch.tv", "ttvnw.net", "jtvnw.net", "soundcloud.com", "sndcdn.com", "disneyplus.com"]
+    } as $preset_map |
+    ([$presets[] | $preset_map[.] // [] | .[] | "domain:" + .]) as $preset_doms |
+    (split_domains($cvpn) + $preset_doms | unique) as $vpn_doms |
+    (split_domains($cdir)) as $dir_doms |
+
+    ([
+      # gRPC api XKeen (балансировка по скорости, xkeen -sb) — правило должно идти первым
+      (if $has_api == "true" then { inboundTag: ["api"], outboundTag: "api" } else empty end),
+      ({
+        type: "field",
+        inboundTag: ["force-proxy-redirect", "force-proxy-tproxy", "happ-check"]
+      } + vpn_target),
+
+      {
+        type: "field",
+        inboundTag: ["redirect", "tproxy"],
+        outboundTag: "block",
+        network: "udp",
+        port: "135,137,138,139"
+      },
+
+      (if $bquic == "true" then {
+        type: "field",
+        inboundTag: ["redirect", "tproxy"],
+        outboundTag: "block",
+        network: "udp",
+        port: "443"
+      } else empty end),
+
+      (if $bads == "true" and $has_geo == "true" then {
+        type: "field",
+        inboundTag: ["redirect", "tproxy"],
+        outboundTag: "block",
+        domain: [
+          "ext:geosite_v2fly.dat:category-ads-all",
+          "google-analytics",
+          "analytics.yandex",
+          "appcenter.ms",
+          "app-measurement.com"
+        ]
+      } else empty end),
+
+      (if ($dir_doms | length) > 0 then {
+        type: "field",
+        inboundTag: ["redirect", "tproxy"],
+        outboundTag: "direct",
+        domain: $dir_doms
+      } else empty end),
+
+      (if ($vpn_doms | length) > 0 and $mode != "blocked" then ({
+        type: "field",
+        inboundTag: ["redirect", "tproxy"],
+        domain: $vpn_doms
+      } + vpn_target) else empty end),
+
+      (if $dvoice == "true" then ({
+        type: "field",
+        inboundTag: ["redirect", "tproxy"],
+        network: "udp",
+        port: "50000-50030"
+      } + vpn_target) else empty end)
+    ] + (
+      if $mode == "blocked" then [
+        (if $has_geo == "true" then ({
+          type: "field",
+          inboundTag: ["redirect", "tproxy"],
+          domain: ([
+            "ext:geosite_zkeen.dat:domains",
+            "ext:geosite_zkeen.dat:other",
+            "ext:geosite_zkeen.dat:youtube"
+          ] + $vpn_doms | unique)
+        } + vpn_target) else (
+          if ($vpn_doms | length) > 0 then ({
+            type: "field",
+            inboundTag: ["redirect", "tproxy"],
+            domain: $vpn_doms
+          } + vpn_target) else empty end
+        ) end),
+        (if $has_geo == "true" then ({
+          type: "field",
+          inboundTag: ["redirect", "tproxy"],
+          ip: [
+            "ext:geoip_zkeenip.dat:youtube",
+            "ext:geoip_zkeenip.dat:meta",
+            "ext:geoip_zkeenip.dat:discord",
+            "ext:geoip_zkeenip.dat:telegram"
+          ]
+        } + vpn_target) else empty end),
+        {
+          type: "field",
+          inboundTag: ["redirect", "tproxy"],
+          outboundTag: "direct",
+          protocol: ["bittorrent"]
+        },
+        {
+          type: "field",
+          inboundTag: ["redirect", "tproxy"],
+          outboundTag: "direct",
+          network: "tcp,udp"
+        }
+      ]
+      elif $mode == "except_ru" then [
+        {
+          type: "field",
+          inboundTag: ["redirect", "tproxy"],
+          outboundTag: "direct",
+          protocol: ["bittorrent"]
+        },
+        (if $has_geo == "true" then {
+          type: "field",
+          inboundTag: ["redirect", "tproxy"],
+          outboundTag: "direct",
+          domain: ([
+            "domain:ru",
+            "domain:su",
+            "domain:xn--p1ai",
+            "ext:geosite_v2fly.dat:category-gov-ru",
+            "ext:geosite_v2fly.dat:yandex",
+            "ext:geosite_v2fly.dat:vk",
+            "ext:geosite_zkeen.dat:bypass"
+          ] + $dir_doms | unique)
+        } else {
+          type: "field",
+          inboundTag: ["redirect", "tproxy"],
+          outboundTag: "direct",
+          domain: ([
+            "domain:ru",
+            "domain:su",
+            "domain:xn--p1ai"
+          ] + $dir_doms | unique)
+        } end),
+        (if $has_geo == "true" then {
+          type: "field",
+          inboundTag: ["redirect", "tproxy"],
+          outboundTag: "direct",
+          ip: [
+            "ext:geoip_zkeenip.dat:ru"
+          ]
+        } else empty end),
+        ({
+          type: "field",
+          inboundTag: ["redirect", "tproxy"],
+          network: "tcp,udp"
+        } + vpn_target)
+      ]
+      else [
+        {
+          type: "field",
+          inboundTag: ["redirect", "tproxy"],
+          outboundTag: "direct",
+          protocol: ["bittorrent"]
+        },
+        ({
+          type: "field",
+          inboundTag: ["redirect", "tproxy"],
+          network: "tcp,udp"
+        } + vpn_target)
+      ] end
+    )) as $all_rules |
+
+    {
+      routing: (
+        {
+          domainStrategy: "IPIfNonMatch"
+        } + (
+          if $use_bal == "true" then {
+            balancers: [
+              {
+                tag: "balancer",
+                selector: ["proxy-"],
+                strategy: {
+                  type: "leastPing"
+                },
+                fallbackTag: $sel_tag
+              }
+            ]
+          } else {} end
+        ) + {
+          rules: $all_rules
+        }
+      )
+    }' > "$stage/05_routing.json"
+
+    # Служебный вход для проверки VPN (xkeen-happ-ctl health): только 127.0.0.1
+    cat > "$stage/08_happ_check.json" <<'INNER_CHECK'
+{
+  "inbounds": [
+    {
+      "tag": "happ-check",
+      "listen": "127.0.0.1",
+      "port": 10811,
+      "protocol": "socks",
+      "settings": { "udp": false }
+    }
+  ]
+}
+INNER_CHECK
+
+    # Новый конфиг сначала проверяет сам Xray: при ошибке остаётся прежний рабочий
+    xray_bin="$OPT_DIR/sbin/xray"
+    if [ -x "$xray_bin" ]; then
+        if ! test_out=$(XRAY_LOCATION_ASSET="$OPT_DIR/etc/xray/dat" "$xray_bin" run -test -confdir "$stage" 2>&1); then
+            err=$(printf '%s\n' "$test_out" | grep -iE 'failed|error|invalid' | tail -n 1 | cut -c1-300)
+            log_msg "Xray отверг новый конфиг, оставлен прежний: $err"
+            jq --arg e "Xray отверг новый конфиг (оставлен прежний): ${err:-см. журнал}" '.last_error = $e' "$STATE_FILE" > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+            rm -rf "$stage"
+            return 1
+        fi
+    fi
+
+    mv "$stage/04_outbounds.json" "$OUTBOUNDS_FILE"
+    mv "$stage/05_routing.json" "$ROUTING_FILE"
+    mv "$stage/08_happ_check.json" "$XRAY_CONF_DIR/08_happ_check.json"
+    if [ -f "$stage/07_observatory.json" ]; then
+        mv "$stage/07_observatory.json" "$OBSERVATORY_FILE"
+    else
+        rm -f "$OBSERVATORY_FILE"
+    fi
+    rm -rf "$stage"
+    return 0
+}
+
+ping_all_servers() {
+    ensure_config
+    [ -f "$STATE_FILE" ] || return 1
+    count=$(jq '.servers | length' "$STATE_FILE" 2>/dev/null || echo 0)
+    [ "${count:-0}" -gt 0 ] || return 0
+
+    # Время TCP-соединения до каждого сервера, все замеры параллельно (не дольше ~3 с)
+    ping_dir="/tmp/xkeen-happ-ping.$$"
+    mkdir -p "$ping_dir"
+    jq -r '.servers[] | "\(.address) \(.port)"' "$STATE_FILE" | {
+        i=0
+        while read -r addr port; do
+            case "$addr" in *:*) host="[$addr]" ;; *) host="$addr" ;; esac
+            (curl -g -sS -o /dev/null --connect-timeout 2 -m 3 -w '%{time_connect}' "http://${host}:${port}" \
+                > "$ping_dir/$i" 2>/dev/null) &
+            i=$((i + 1))
+        done
+        wait
+    }
+
+    pings="["
+    i=0
+    while [ "$i" -lt "$count" ]; do
+        ms=$(awk '{ ms = int($1 * 1000 + 0.5); print (ms > 0 ? ms : "null") }' "$ping_dir/$i" 2>/dev/null)
+        [ -z "$ms" ] && ms="null"
+        [ "$i" -gt 0 ] && pings="$pings,"
+        pings="$pings$ms"
+        i=$((i + 1))
+    done
+    pings="$pings]"
+    rm -rf "$ping_dir"
+
+    jq --argjson p "$pings" '.servers |= [to_entries[] | .value + {ping_ms: $p[.key], alive: ($p[.key] != null)}]' \
+        "$STATE_FILE" > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+}
+
+update_subscription() {
+    ensure_config
+    sub_url=$(jq -r '.sub_url // ""' "$CONFIG_FILE")
+    manual_links=$(jq -r '.manual_links // ""' "$CONFIG_FILE")
+    hwid=$(jq -r '.hwid // "7F3A0000000000E1"' "$CONFIG_FILE")
+
+    if [ -z "$sub_url" ] && [ -z "$manual_links" ]; then
+        log_msg "Ошибка обновления: не указан ни URL подписки, ни прямые ссылки"
+        jq '.last_status = "error" | .last_error = "Укажите ссылку на подписку (https://...) или ключи vless://"' "$STATE_FILE" > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+        return 1
+    fi
+
+    profile_title=""
+    upload_bytes=0
+    download_bytes=0
+    total_bytes=0
+    expire_ts=0
+    support_url=""
+    announce=""
+    combined_uris=""
+
+    if [ -n "$sub_url" ]; then
+        case "$sub_url" in
+            vless://*|vmess://*|trojan://*|ss://*|hy2://*|hysteria2://*)
+                combined_uris="$sub_url"
+                profile_title="Прямое подключение"
+                ;;
+            http://*|https://*)
+                hdr_tmp="/tmp/xkeen_sub_hdr.$$"
+                body_tmp="/tmp/xkeen_sub_body.$$"
+                log_msg "Загрузка подписки: $(mask_url "$sub_url")"
+
+                ua=$(jq -r '.user_agent // empty' "$CONFIG_FILE")
+                ver_json=$(rci_show_version)
+                dev_model=$(printf '%s' "$ver_json" | jq -r '.model // empty' 2>/dev/null)
+                dev_os_ver=$(printf '%s' "$ver_json" | jq -r '.release // .title // empty' 2>/dev/null)
+
+                # Сертификат проверяется всегда: подписка — это ключи доступа, подмена недопустима
+                if ! curl -fsSL --proto '=http,https' --connect-timeout 10 -m 25 --max-filesize 5242880 \
+                    -A "${ua:-$DEFAULT_UA}" \
+                    -H "x-hwid: $hwid" \
+                    -H "x-device-os: KeeneticOS" \
+                    -H "x-ver-os: ${dev_os_ver:-unknown}" \
+                    -H "x-device-model: ${dev_model:-Keenetic}" \
+                    -D "$hdr_tmp" -o "$body_tmp" "$sub_url" 2>"$hdr_tmp.err"; then
+                    err=$(tail -n 1 "$hdr_tmp.err" 2>/dev/null)
+                    rm -f "$hdr_tmp" "$hdr_tmp.err" "$body_tmp"
+                    log_msg "Ошибка скачивания подписки $(mask_url "$sub_url"): $err"
+                    jq --arg e "Не удалось скачать подписку: ${err:-нет ответа}" '.last_status = "error" | .last_error = $e' "$STATE_FILE" > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+                    return 1
+                fi
+                rm -f "$hdr_tmp.err"
+
+                if [ -f "$hdr_tmp" ]; then
+                    raw_title=$(grep -i '^profile-title:' "$hdr_tmp" | tail -n 1 | cut -d: -f2-)
+                    [ -n "$raw_title" ] && profile_title="$(decode_header_value "$raw_title")"
+
+                    raw_announce=$(grep -i '^announce:' "$hdr_tmp" | tail -n 1 | cut -d: -f2-)
+                    [ -n "$raw_announce" ] && announce="$(decode_header_value "$raw_announce" | head -c 1000)"
+
+                    raw_support=$(grep -i -E '^(support-url|profile-web-page-url):' "$hdr_tmp" | tail -n 1 | cut -d: -f2- | sed 's/^[[:space:]]*//; s/[[:space:]\r]*$//')
+                    [ -n "$raw_support" ] && support_url="$raw_support"
+
+                    raw_uinfo=$(grep -i '^subscription-userinfo:' "$hdr_tmp" | tail -n 1 | cut -d: -f2-)
+                    if [ -n "$raw_uinfo" ]; then
+                        upload_bytes=$(printf '%s' "$raw_uinfo" | sed -n 's/.*upload=\([0-9][0-9]*\).*/\1/p')
+                        download_bytes=$(printf '%s' "$raw_uinfo" | sed -n 's/.*download=\([0-9][0-9]*\).*/\1/p')
+                        total_bytes=$(printf '%s' "$raw_uinfo" | sed -n 's/.*total=\([0-9][0-9]*\).*/\1/p')
+                        expire_ts=$(printf '%s' "$raw_uinfo" | sed -n 's/.*expire=\([0-9][0-9]*\).*/\1/p')
+                    fi
+                fi
+
+                if grep -Eq '^(vless|vmess|trojan|ss|hy2|hysteria2)://' "$body_tmp" 2>/dev/null; then
+                    decoded_body="$(cat "$body_tmp")"
+                else
+                    decoded_body="$(decode_base64 < "$body_tmp")"
+                fi
+                cp "$body_tmp" "$RAW_SUB_CACHE" 2>/dev/null
+                rm -f "$hdr_tmp" "$body_tmp"
+
+                if [ -z "$profile_title" ]; then
+                    inline_title=$(printf '%s\n' "$decoded_body" | grep -i '^#profile-title:' | head -n 1 | cut -d: -f2-)
+                    [ -n "$inline_title" ] && profile_title="$(decode_header_value "$inline_title")"
+                fi
+
+                combined_uris="$decoded_body"
+                ;;
+            *)
+                log_msg "Неподдерживаемая ссылка подписки: $(mask_url "$sub_url")"
+                jq '.last_status = "error" | .last_error = "Ссылка должна начинаться с https:// (или vless://, vmess://, trojan://, ss://, hy2://)"' "$STATE_FILE" > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+                return 1
+                ;;
+        esac
+    fi
+
+    if [ -n "$manual_links" ]; then
+        combined_uris=$(printf '%s\n%s\n' "$combined_uris" "$manual_links")
+    fi
+
+    parsed=$(printf '%s\n' "$combined_uris" | parse_uris_to_json)
+    srv_count=$(printf '%s' "$parsed" | jq '.servers | length' 2>/dev/null || echo 0)
+
+    if [ "${srv_count:-0}" -eq 0 ]; then
+        log_msg "Ошибка: в подписке не найдено ни одного поддерживаемого сервера (vless/vmess/trojan/ss/hy2)"
+        jq '.last_status = "error" | .last_error = "В подписке не найдено поддерживаемых серверов (VLESS/VMess/Trojan/SS/Hy2)"' "$STATE_FILE" > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+        return 1
+    fi
+
+    [ -z "$profile_title" ] && profile_title="Happ VPN (${srv_count} серв.)"
+    now_str="$(date '+%Y-%m-%d %H:%M')"
+
+    old_Hash=""
+    [ -f "$OUTBOUNDS_FILE" ] && old_Hash=$(md5sum "$OUTBOUNDS_FILE" 2>/dev/null | awk '{print $1}')
+
+    if ! apply_xray_configs "$parsed"; then
+        jq '.last_status = "error"' "$STATE_FILE" > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+        return 1
+    fi
+
+    servers_json=$(printf '%s' "$parsed" | jq '.servers')
+    jq -n \
+        --arg title "$profile_title" \
+        --argjson up "${upload_bytes:-0}" \
+        --argjson down "${download_bytes:-0}" \
+        --argjson total "${total_bytes:-0}" \
+        --argjson exp "${expire_ts:-0}" \
+        --arg sup "$support_url" \
+        --arg ann "$announce" \
+        --arg upd "$now_str" \
+        --argjson cnt "$srv_count" \
+        --argjson srvs "$servers_json" \
+        '{
+          profile_title: $title,
+          upload_bytes: $up,
+          download_bytes: $down,
+          total_bytes: $total,
+          expire_ts: $exp,
+          support_url: $sup,
+          announce: $ann,
+          last_updated: $upd,
+          last_status: "ok",
+          last_error: "",
+          server_count: $cnt,
+          servers: $srvs
+        }' > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+
+    ping_all_servers
+
+    new_Hash=""
+    [ -f "$OUTBOUNDS_FILE" ] && new_Hash=$(md5sum "$OUTBOUNDS_FILE" 2>/dev/null | awk '{print $1}')
+
+    log_msg "Подписка '$profile_title' успешно обновлена: серверов — $srv_count"
+
+    if [ "${1:-}" = "--restart" ] || [ "$old_Hash" != "$new_Hash" ]; then
+        restart_xkeen_if_available || return 1
+    fi
+    return 0
+}
+
+# Перезапуск Xray и проверка, что трафик реально идёт через VPN. Не прошло —
+# возвращаем последний рабочий конфиг (xkeen-happ-ctl rollback) и сообщаем об этом.
+restart_xkeen_if_available() {
+    [ -x "$OPT_DIR/sbin/xkeen" ] || return 0
+    ctl="$OPT_DIR/bin/xkeen-happ-ctl"
+    if [ -x "$ctl" ]; then
+        log_msg "Перезапуск XKeen..."
+        "$ctl" restart
+    else
+        "$OPT_DIR/sbin/xkeen" -restart >/dev/null 2>&1 9>&-
+        return 0
+    fi
+    if "$ctl" health >/dev/null 2>&1; then
+        "$ctl" good-save
+        log_msg "Проверка VPN пройдена, конфиг сохранён как рабочий"
+        # балансировка XKeen по скорости: после рестарта сразу перемерить, а не ждать 15 минут
+        if [ "$("$ctl" speed-state 2>/dev/null)" = "on" ]; then
+            "$OPT_DIR/sbin/xkeen" -sbt </dev/null >/dev/null 2>&1 9>&- &
+        fi
+        return 0
+    fi
+    if [ -f "$HAPP_CONF_DIR/good/.saved" ]; then
+        log_msg "Проверка VPN не пройдена — возвращаю рабочий конфиг"
+        "$ctl" rollback
+        jq '.last_status = "error" | .last_error = "Новый конфиг не пропускал трафик — возвращён прежний рабочий"' "$STATE_FILE" > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+        "$ctl" notify "↩️ Новый конфиг VPN не заработал, автоматически возвращён прежний рабочий." >/dev/null 2>&1
+    else
+        log_msg "Проверка VPN не пройдена, а рабочего конфига для отката ещё нет"
+        jq '.last_error = "VPN не пропускает трафик — проверьте подписку (Диагностика)"' "$STATE_FILE" > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+    fi
+    return 1
+}
+
+sync_cron() {
+    ensure_config
+    auto_upd=$(jq -r '.auto_update // true' "$CONFIG_FILE")
+    cron_expr=$(jq -r '.update_cron // "0 4 * * *"' "$CONFIG_FILE")
+    # В crontab попадает только строгое выражение из 5 полей — иначе это была бы дыра для любых команд
+    case "$cron_expr" in *"
+"*) cron_expr="invalid" ;; esac
+    if ! printf '%s' "$cron_expr" | grep -Eq "$CRON_RE"; then
+        log_msg "Некорректное расписание update_cron, используется 0 4 * * *"
+        cron_expr="0 4 * * *"
+    fi
+
+    mkdir -p "$CRON_DIR" 2>/dev/null
+    touch "$CRON_FILE" 2>/dev/null
+    grep -v "xkeen-sub cron-update\|xkeen-sub watchdog" "$CRON_FILE" > "$CRON_FILE.tmp" 2>/dev/null || true
+    if [ "$auto_upd" = "true" ]; then
+        printf '%s %s/bin/xkeen-sub cron-update >/dev/null 2>&1\n' "$cron_expr" "$OPT_DIR" >> "$CRON_FILE.tmp"
+    fi
+    printf '*/5 * * * * %s/bin/xkeen-sub watchdog >/dev/null 2>&1; %s/bin/xkeen-sub events >/dev/null 2>&1\n' "$OPT_DIR" "$OPT_DIR" >> "$CRON_FILE.tmp"
+    sed -i '/^$/d' "$CRON_FILE.tmp" 2>/dev/null || true
+    mv "$CRON_FILE.tmp" "$CRON_FILE" 2>/dev/null
+    chmod 600 "$CRON_FILE" 2>/dev/null || true
+}
+
+# Принимает JSON с настройками из панели (stdin) и сохраняет только известные поля
+# с проверкой типов. Возвращает 0, если подписку нужно скачать заново.
+save_config() {
+    ensure_config
+    input=$(cat)
+    printf '%s' "$input" | jq -e 'type == "object"' >/dev/null 2>&1 || { echo "Некорректный JSON" >&2; return 2; }
+    merged=$(printf '%s' "$input" | jq -c --slurpfile cur "$CONFIG_FILE" '
+        # без регулярных выражений: jq в Entware собран без oniguruma
+        def str($max): type == "string" and length <= $max;
+        def trimws: explode | . as $c | (map(. > 32) | index(true)) as $a
+          | if $a == null then "" else ($c | reverse | map(. > 32) | index(true)) as $b | $c[$a:(length - $b)] | implode end;
+        def only($ok): explode | all(. as $c | $ok | index($c) != null);
+        def digits: explode | length > 0 and all(. >= 48 and . <= 57);
+        def cronok: only("0123456789*/,- " | explode) and (split(" ") | length == 5 and all(length > 0));
+        def plain: explode | all(. >= 32 and . != 34 and . != 92);
+        def bad($k): error("Недопустимое значение поля " + $k);
+        . as $in | $cur[0] as $c |
+        reduce ("sub_url", "manual_links", "routing_mode", "selection_mode", "selected_tag",
+                "auto_update", "update_cron", "custom_vpn_domains", "custom_direct_domains",
+                "block_ads", "block_quic", "discord_voice", "presets", "tg_token", "tg_chat", "notify") as $k ($c;
+          if ($in | has($k)) | not then .
+          else ($in[$k]) as $v |
+            if ($k == "sub_url") then
+              (($v | if type == "string" then trimws else . end) as $u
+               | if ($u | str(4096)) and ($u == "" or any("https://", "http://", "vless://", "vmess://", "trojan://", "ss://", "hy2://", "hysteria2://"; . as $p | $u | startswith($p)))
+                 then .[$k] = $u else bad($k) end)
+            elif ($k == "manual_links") then (if $v | str(65536) then .[$k] = $v else bad($k) end)
+            elif ($k == "routing_mode") then (if $v == "blocked" or $v == "except_ru" or $v == "full" then .[$k] = $v else bad($k) end)
+            elif ($k == "selection_mode") then (if $v == "auto" or $v == "manual" then .[$k] = $v else bad($k) end)
+            elif ($k == "selected_tag") then (if ($v | str(32)) and ($v | startswith("proxy-")) and ($v | ltrimstr("proxy-") | digits) then .[$k] = $v else bad($k) end)
+            elif ($k == "update_cron") then (if ($v | str(64)) and ($v | cronok) then .[$k] = $v else bad($k) end)
+            elif ($k == "presets") then
+              (if ($v | type) == "array" and ($v | all(. == "ai" or . == "social" or . == "games" or . == "streaming")) then .[$k] = ($v | unique) else bad($k) end)
+            elif ($k == "tg_token") then
+              (if ($v | str(100)) and ($v | only("0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_-" | explode)) then .[$k] = $v else bad($k) end)
+            elif ($k == "tg_chat") then
+              (if ($v | str(32)) and ($v | only("-0123456789" | explode)) then .[$k] = $v else bad($k) end)
+            elif ($k == "custom_vpn_domains" or $k == "custom_direct_domains") then
+              (if ($v | str(8192)) and ($v | plain) then .[$k] = $v else bad($k) end)
+            else (if ($v | type) == "boolean" then .[$k] = $v else bad($k) end)
+            end
+          end)' 2>&1) || { printf '%s\n' "$merged" | sed 's/^jq: error.*): //' >&2; return 2; }
+
+    old_src=$(jq -c '[.sub_url, .manual_links]' "$CONFIG_FILE")
+    printf '%s\n' "$merged" | jq . > "$CONFIG_FILE.tmp.$$" && mv "$CONFIG_FILE.tmp.$$" "$CONFIG_FILE"
+    new_src=$(jq -c '[.sub_url, .manual_links]' "$CONFIG_FILE")
+    [ "$old_src" != "$new_src" ] || [ "$(printf '%s' "$input" | jq -r '.fetch_now // false')" = "true" ]
+}
+
+case "${1:-status}" in
+    update)
+        take_lock || exit 1
+        update_subscription "--restart"
+        rc=$?
+        sync_cron
+        exit $rc
+        ;;
+    cron-update)
+        take_lock || exit 1
+        log_msg "Запуск планового автообновления подписки по расписанию cron..."
+        update_subscription
+        ;;
+    apply)
+        take_lock || exit 1
+        apply_xray_configs "" && restart_xkeen_if_available
+        sync_cron
+        ;;
+    save-config)
+        take_lock || exit 1
+        save_config
+        ;;
+    watchdog)
+        # Сторож: если Xray упал, а автозапуск XKeen включён — поднимаем, не чаще раза в 10 минут.
+        # «xkeen-sub watchdog off» отключает, «on» включает; кнопка «Стоп» в панели ставит паузу.
+        case "${2:-}" in
+            on|off)
+                ensure_config
+                jq --argjson v "$([ "$2" = on ] && echo true || echo false)" '.watchdog = $v' "$CONFIG_FILE" > "$CONFIG_FILE.tmp.$$" && mv "$CONFIG_FILE.tmp.$$" "$CONFIG_FILE"
+                echo "Сторож: $2"
+                exit 0
+                ;;
+        esac
+        [ "$(jq -r '.watchdog // true' "$CONFIG_FILE" 2>/dev/null)" = "false" ] && exit 0
+        [ -f "$HAPP_CONF_DIR/.paused" ] && exit 0
+        [ -x "$OPT_DIR/sbin/xkeen" ] && [ -x "$OPT_DIR/sbin/xray" ] && [ -s "$OUTBOUNDS_FILE" ] || exit 0
+        grep -q 'start_auto="on"' "$OPT_DIR/etc/init.d/S05xkeen" 2>/dev/null || exit 0
+        pidof xray >/dev/null 2>&1 && exit 0
+        stamp="$HAPP_CONF_DIR/.watchdog-last"
+        [ -n "$(find "$stamp" -mmin -10 2>/dev/null)" ] && exit 0
+        touch "$stamp"
+        log_msg "Сторож: Xray не работает — запускаю XKeen"
+        "$OPT_DIR/sbin/xkeen" -start >/dev/null 2>&1
+        ;;
+    events)
+        # уведомления в Telegram (из cron вместе со сторожем)
+        [ -x "$OPT_DIR/bin/xkeen-happ-ctl" ] && "$OPT_DIR/bin/xkeen-happ-ctl" check-events
+        ;;
+    ping)
+        take_lock || exit 1
+        ping_all_servers
+        ;;
+    cron)
+        sync_cron
+        ;;
+    status)
+        ensure_config
+        xray_running="false"
+        if pidof xray >/dev/null 2>&1 || [ "${XKEEN_MOCK_RUNNING:-0}" = "1" ]; then
+            xray_running="true"
+        fi
+        rci_status='{"rci_available":false,"model":"","xkeen_policy_exists":false,"policy_id":""}'
+        if [ -x "$OPT_DIR/bin/xkeen-rci-setup" ]; then
+            rci_status=$("$OPT_DIR/bin/xkeen-rci-setup" status 2>/dev/null || echo "$rci_status")
+        fi
+        jq -n \
+            --slurpfile cfg "$CONFIG_FILE" \
+            --slurpfile st "$STATE_FILE" \
+            --arg xrun "$xray_running" \
+            --argjson rci "$rci_status" \
+            '{
+              xray_running: ($xrun == "true"),
+              router: $rci,
+              config: $cfg[0],
+              state: $st[0]
+            }'
+        ;;
+    *)
+        echo "Использование: xkeen-sub {update|cron-update|apply|save-config|ping|cron|status|watchdog [on|off]}"
+        exit 1
+        ;;
+esac

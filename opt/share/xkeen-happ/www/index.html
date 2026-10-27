@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<title>XKeen Happ</title>
+<style>
+@font-face { font-family: "Onest"; font-weight: 400 700; font-display: swap; src: url(fonts/onest-cyrillic.woff2) format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116; }
+@font-face { font-family: "Onest"; font-weight: 400 700; font-display: swap; src: url(fonts/onest-latin.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+:root {
+  --paper: #eef2f5;
+  --surface: #ffffff;
+  --sunken: #f5f7f9;
+  --ink: #15202b;
+  --muted: #5d6b7a;
+  --faint: #8d99a6;
+  --line: #dbe2e8;
+  --cable: #0b7a75;
+  --cable-soft: #e3f2f1;
+  --ok: #1d8f53;
+  --ok-soft: #e3f4ea;
+  --warn: #a96b12;
+  --warn-soft: #fbf0dc;
+  --bad: #bf3b22;
+  --bad-soft: #fbe6e1;
+  --focus: #0b7a75;
+  --shadow: 0 1px 2px rgba(21, 32, 43, .06), 0 8px 24px rgba(21, 32, 43, .06);
+  --r-panel: 16px;
+  --r-ctl: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0e161e;
+    --surface: #15202a;
+    --sunken: #111b24;
+    --ink: #e5ecf2;
+    --muted: #93a3b3;
+    --faint: #66788a;
+    --line: #243341;
+    --cable: #3cb6ad;
+    --cable-soft: #12302f;
+    --ok: #46c27e;
+    --ok-soft: #12301f;
+    --warn: #e0a344;
+    --warn-soft: #352710;
+    --bad: #ef7a62;
+    --bad-soft: #3a1b15;
+    --focus: #3cb6ad;
+    --shadow: none;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 400 15px/1.5 "Onest", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-feature-settings: "tnum" 1;
+}
+button, input, textarea, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+h1, h2, h3 { margin: 0; font-weight: 650; letter-spacing: -0.01em; }
+p { margin: 0; }
+a { color: var(--cable); }
+[hidden] { display: none !important; }
+
+/* --- Каркас: боковое меню на компьютере, нижние вкладки на телефоне --- */
+.shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
+.nav {
+  position: sticky; top: 0; height: 100vh; padding: 24px 14px;
+  display: flex; flex-direction: column; gap: 4px; border-right: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 22px; }
+.brand-mark { width: 30px; height: 30px; border-radius: 9px; background: var(--cable); display: grid; place-items: center; color: #fff; }
+.brand-mark svg { width: 18px; height: 18px; }
+.brand b { font-size: 16px; font-weight: 650; }
+.brand small { display: block; color: var(--faint); font-size: 12px; line-height: 1.2; }
+.nav-item {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--r-ctl);
+  border: 0; background: none; text-align: left; cursor: pointer; color: var(--muted); font-weight: 500;
+}
+.nav-item svg { width: 20px; height: 20px; flex: none; }
+.nav-item:hover { color: var(--ink); background: var(--sunken); }
+.nav-item[aria-current="page"] { color: var(--ink); background: var(--surface); box-shadow: var(--shadow); }
+.nav-item[aria-current="page"] svg { color: var(--cable); }
+.nav-foot { margin-top: auto; padding: 0 12px; font-size: 12px; color: var(--faint); }
+
+main { padding: 32px 40px 80px; max-width: 880px; width: 100%; margin: 0 auto; }
+.page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.page-head h1 { font-size: 26px; }
+.page-head p { color: var(--muted); margin-top: 4px; font-size: 14px; }
+
+@media (max-width: 820px) {
+  .shell { grid-template-columns: 1fr; }
+  .nav {
+    position: fixed; z-index: 20; top: auto; bottom: 0; left: 0; right: 0; height: auto;
+    flex-direction: row; justify-content: space-around; gap: 0; padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+    border-right: 0; border-top: 1px solid var(--line); background: var(--surface);
+  }
+  .brand, .nav-foot { display: none; }
+  .nav-item { flex-direction: column; gap: 3px; padding: 6px 4px; font-size: 11px; flex: 1; text-align: center; align-items: center; }
+  .nav-item[aria-current="page"] { box-shadow: none; background: none; }
+  main { padding: 20px 16px 110px; }
+  .page-head { flex-wrap: wrap; align-items: flex-start; }
+  .page-head h1 { font-size: 22px; }
+}
+
+/* --- Общие элементы --- */
+.panel { background: var(--surface); border-radius: var(--r-panel); box-shadow: var(--shadow); border: 1px solid var(--line); }
+.section { margin-top: 28px; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0 4px 10px; }
+.section-head h2 { font-size: 17px; }
+.section-head .hint { color: var(--muted); font-size: 13px; }
+.hint { color: var(--muted); font-size: 13.5px; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px;
+  padding: 8px 16px; border-radius: var(--r-ctl); border: 1px solid var(--line); background: var(--surface);
+  cursor: pointer; font-weight: 550; font-size: 14px; white-space: nowrap;
+}
+.btn:hover { border-color: var(--faint); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.primary { background: var(--cable); border-color: var(--cable); color: #fff; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.quiet { border-color: transparent; background: none; color: var(--cable); padding-inline: 8px; }
+.btn.danger { color: var(--bad); }
+.btn svg { width: 18px; height: 18px; }
+.btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Список настроек — строки внутри одной панели */
+.rows > * + * { border-top: 1px solid var(--line); }
+.row { display: flex; align-items: center; gap: 14px; padding: 14px 18px; min-height: 60px; }
+button.row { width: 100%; border-left: 0; border-right: 0; border-bottom: 0; background: none; text-align: left; cursor: pointer; }
+.rows > button.row:first-child { border-top: 0; border-radius: var(--r-panel) var(--r-panel) 0 0; }
+button.row:hover { background: var(--sunken); }
+.row-main { flex: 1; min-width: 0; }
+.row-title { font-weight: 550; }
+.row-sub { color: var(--muted); font-size: 13px; margin-top: 1px; overflow-wrap: anywhere; }
+.row-end { flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.row .go { color: var(--cable); font-weight: 550; font-size: 14px; }
+
+.field { display: block; padding: 14px 18px; }
+.field > span { display: block; font-weight: 550; margin-bottom: 6px; }
+.field small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+.input, textarea.input {
+  width: 100%; min-height: 42px; padding: 9px 12px; border-radius: var(--r-ctl);
+  border: 1px solid var(--line); background: var(--sunken); outline: none;
+}
+.input:focus { border-color: var(--cable); background: var(--surface); }
+textarea.input { min-height: 96px; resize: vertical; font-size: 13.5px; line-height: 1.45; }
+.input-group { display: flex; gap: 8px; }
+.input-group .input { flex: 1; min-width: 0; }
+
+/* Переключатель */
+.switch { position: relative; width: 46px; height: 28px; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
+.switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--line); transition: background .15s; }
+.switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .15s; }
+.switch input:checked + span { background: var(--cable); }
+.switch input:checked + span::after { transform: translateX(18px); }
+.switch input:disabled + span { opacity: .45; }
+.switch input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Выбор из нескольких вариантов */
+.choice { display: grid; gap: 10px; }
+.choice label {
+  display: grid; grid-template-columns: 22px 1fr; gap: 4px 12px; align-items: start; cursor: pointer;
+  padding: 14px 16px; border-radius: 14px; border: 1px solid var(--line); background: var(--surface);
+}
+.choice input { margin: 3px 0 0; width: 18px; height: 18px; accent-color: var(--cable); }
+.choice b { font-weight: 600; }
+.choice small { grid-column: 2; color: var(--muted); font-size: 13px; }
+.choice label:has(input:checked) { border-color: var(--cable); background: var(--cable-soft); }
+.choice label:has(input:disabled) { opacity: .55; cursor: default; }
+
+.tag { font-size: 12.5px; color: var(--muted); min-width: 70px; text-align: right; }
+.ms { font-weight: 600; font-size: 13.5px; }
+.ms.good { color: var(--ok); } .ms.mid { color: var(--warn); } .ms.dead { color: var(--bad); }
+
+/* --- Обзор: состояние и путь трафика --- */
+.status { padding: 26px 26px 22px; }
+.status-line { display: flex; align-items: center; gap: 14px; }
+.status-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--faint); flex: none; }
+.status h1 { font-size: 30px; line-height: 1.15; }
+.status-sub { color: var(--muted); margin-top: 6px; font-size: 15px; }
+.status[data-state="ok"] .status-dot { background: var(--ok); box-shadow: 0 0 0 6px var(--ok-soft); }
+.status[data-state="warn"] .status-dot { background: var(--warn); box-shadow: 0 0 0 6px var(--warn-soft); }
+.status[data-state="bad"] .status-dot { background: var(--bad); box-shadow: 0 0 0 6px var(--bad-soft); }
+
+.route { display: grid; grid-template-columns: auto 1fr auto 1fr auto 1fr auto; align-items: start; margin: 28px 0 6px; }
+.hop { display: grid; justify-items: center; gap: 6px; text-align: center; min-width: 72px; }
+.hop-icon { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: var(--sunken); border: 1px solid var(--line); color: var(--muted); }
+.hop-icon svg { width: 24px; height: 24px; }
+.hop b { font-size: 13px; font-weight: 600; }
+.hop small { font-size: 12px; color: var(--muted); max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: -4px; }
+.wire { height: 3px; border-radius: 3px; background: var(--line); margin: 23px 6px 0; position: relative; overflow: hidden; }
+.status[data-state="ok"] .wire { background: var(--ok); }
+.status[data-state="ok"] .hop-icon { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
+.status[data-state="bad"] .wire.cut { background: repeating-linear-gradient(90deg, var(--bad) 0 6px, transparent 6px 11px); }
+.status[data-state="bad"] .hop-icon.far { color: var(--bad); border-color: var(--bad); background: var(--bad-soft); }
+.status[data-state="ok"] .wire::after {
+  content: ""; position: absolute; top: 0; left: -30%; width: 30%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.85), transparent); animation: flow 2.4s linear infinite;
+}
+@keyframes flow { to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .status[data-state="ok"] .wire::after { display: none; } }
+@media (max-width: 560px) {
+  .hop { min-width: 0; } .hop small { max-width: 70px; }
+  .hop-icon { width: 40px; height: 40px; } .wire { margin: 19px 3px 0; }
+  .status { padding: 20px 18px; } .status h1 { font-size: 24px; }
+  .status-actions .btn { flex: 1; padding-inline: 10px; }
+}
+.status-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+
+.notice { display: flex; gap: 12px; padding: 12px 14px; border-radius: 12px; background: var(--warn-soft); margin-top: 14px; font-size: 14px; }
+.notice svg { width: 20px; height: 20px; flex: none; color: var(--warn); margin-top: 1px; }
+
+.meter { height: 6px; border-radius: 6px; background: var(--sunken); overflow: hidden; margin-top: 10px; }
+.meter i { display: block; height: 100%; background: var(--cable); border-radius: 6px; }
+
+/* Серверы и устройства */
+.list-row { display: flex; align-items: center; gap: 12px; padding: 12px 18px; min-height: 58px; }
+.list-row.pick { cursor: pointer; }
+.list-row.pick:hover { background: var(--sunken); }
+.list-row[aria-checked="true"] { background: var(--cable-soft); }
+.radio { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--faint); flex: none; }
+.list-row[aria-checked="true"] .radio { border: 6px solid var(--cable); }
+.flag { font-size: 20px; width: 28px; text-align: center; flex: none; }
+.muted-row .row-title { color: var(--muted); font-weight: 500; }
+details.more > summary { cursor: pointer; padding: 14px 18px; color: var(--muted); list-style: none; font-weight: 550; }
+details.more > summary::-webkit-details-marker { display: none; }
+details.more > summary::before { content: "▸  "; }
+details.more[open] > summary::before { content: "▾  "; }
+details.more > .rows { border-top: 1px solid var(--line); }
+
+/* Обслуживание */
+.facts { display: grid; grid-template-columns: repeat(4, 1fr); padding: 16px 18px; gap: 12px; }
+.facts div { display: grid; gap: 2px; }
+.facts span { color: var(--muted); font-size: 12.5px; }
+.facts b { font-weight: 600; }
+@media (max-width: 560px) { .facts { grid-template-columns: 1fr 1fr; } }
+pre.log {
+  margin: 0; padding: 14px 18px; max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: 12.5px/1.5 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; color: var(--muted); background: var(--sunken);
+}
+.panel > pre.log:last-child { border-radius: 0 0 var(--r-panel) var(--r-panel); border-top: 1px solid var(--line); }
+
+/* Нижняя панель сохранения */
+.savebar { position: sticky; bottom: 16px; margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px; align-items: center; padding: 12px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.savebar .hint { margin-right: auto; }
+@media (max-width: 820px) { .savebar { bottom: 80px; } .savebar .hint { display: none; } .savebar .btn { flex: 1; } }
+
+/* Окна */
+.overlay { position: fixed; inset: 0; z-index: 50; display: none; place-items: center; padding: 16px; background: rgba(9, 15, 21, .55); }
+.overlay.show { display: grid; }
+.dialog { width: 100%; max-width: 420px; max-height: 90vh; overflow: auto; padding: 24px; border-radius: 18px; background: var(--surface); }
+.dialog.wide { max-width: 620px; }
+.dialog h2 { font-size: 20px; }
+.dialog p { color: var(--muted); margin: 6px 0 16px; font-size: 14px; }
+.dialog .input { margin-bottom: 10px; }
+.err { color: var(--bad); font-size: 13.5px; min-height: 20px; margin-bottom: 6px; }
+.check { display: grid; grid-template-columns: 28px 1fr; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.check b { display: block; font-weight: 600; }
+.check span { color: var(--muted); overflow-wrap: anywhere; }
+.check i { font-style: normal; font-size: 16px; text-align: center; }
+
+.toast {
+  position: fixed; z-index: 60; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: calc(100% - 32px);
+  padding: 12px 18px; border-radius: 12px; background: var(--ink); color: var(--paper); font-size: 14px; font-weight: 500;
+  opacity: 0; pointer-events: none; transition: opacity .2s;
+}
+.toast.show { opacity: 1; }
+@media (max-width: 820px) { .toast { bottom: 92px; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20h14V9.5"/></symbol>
+  <symbol id="i-router" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 16.5h.01M11 16.5h.01"/><path d="M8 9a5.5 5.5 0 0 1 8 0M5.5 6.5a9 9 0 0 1 13 0"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="8" rx="2"/><rect x="4" y="13" width="16" height="8" rx="2"/><path d="M8 7h.01M8 17h.01"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+  <symbol id="i-overview" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 4.5-5"/></symbol>
+  <symbol id="i-devices" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="13" height="10" rx="1.5"/><path d="M6 19h5"/><rect x="17" y="8" width="5" height="11" rx="1.2"/></symbol>
+  <symbol id="i-rules" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h11M4 12h7M4 18h11"/><path d="m16 15 3 3-3 3M19 6l-3 3"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
+</svg>
+
+<div class="shell">
+  <nav class="nav" aria-label="Разделы">
+    <div class="brand">
+      <div class="brand-mark"><svg><use href="#i-router"/></svg></div>
+      <div><b>XKeen Happ</b><small id="navModel">роутер</small></div>
+    </div>
+    <button class="nav-item" data-page="overview" aria-current="page"><svg><use href="#i-overview"/></svg>Обзор</button>
+    <button class="nav-item" data-page="servers"><svg><use href="#i-server"/></svg>Серверы</button>
+    <button class="nav-item" data-page="devices"><svg><use href="#i-devices"/></svg>Устройства</button>
+    <button class="nav-item" data-page="rules"><svg><use href="#i-rules"/></svg>Правила</button>
+    <button class="nav-item" data-page="settings"><svg><use href="#i-settings"/></svg>Настройки</button>
+    <div class="nav-foot" id="navVer"></div>
+  </nav>
+
+  <main>
+    <!-- ============ Обзор ============ -->
+    <section data-page="overview">
+      <div class="panel status" id="statusPanel" data-state="idle">
+        <div class="status-line"><span class="status-dot"></span><h1 id="statusTitle">Проверяю…</h1></div>
+        <p class="status-sub" id="statusSub">Смотрю, как работает VPN на роутере.</p>
+
+        <div class="route" aria-hidden="true">
+          <div class="hop"><div class="hop-icon"><svg><use href="#i-home"/></svg></div><b>Дом</b><small id="hopHome">устройства</small></div>
+          <div class="wire"></div>
+          <div class="hop"><div class="hop-icon"><svg><use href="#i-router"/></svg></div><b>Роутер</b><small id="hopRouter">XKeen</small></div>
+          <div class="wire cut"></div>
+          <div class="hop"><div class="hop-icon far"><svg><use href="#i-server"/></svg></div><b>Сервер</b><small id="hopServer">—</small></div>
+          <div class="wire cut"></div>
+          <div class="hop"><div class="hop-icon far"><svg><use href="#i-globe"/></svg></div><b>Интернет</b><small id="hopNet">—</small></div>
+        </div>
+
+        <div class="status-actions">
+          <button class="btn" onclick="checkVpn()"><svg><use href="#i-refresh"/></svg>Проверить ещё раз</button>
+          <button class="btn" onclick="openDoctor()">Диагностика</button>
+          <button class="btn primary" id="startBtn" onclick="service('start')" hidden>Включить VPN</button>
+        </div>
+        <div class="notice" id="errNotice" hidden><svg><use href="#i-info"/></svg><div id="errText"></div></div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>Подписка</h2><button class="btn quiet" onclick="updateSub()">Обновить сейчас</button></div>
+        <div class="panel rows">
+          <div class="row">
+            <div class="row-main">
+              <div class="row-title" id="subTitle">Подписка не подключена</div>
+              <div class="row-sub" id="subMeta">Добавьте ссылку в «Настройках».</div>
+              <div class="meter" id="subMeter" hidden><i id="subMeterFill"></i></div>
+            </div>
+          </div>
+          <div class="row" id="announceRow" hidden><div class="row-main"><div class="row-sub" style="margin:0" id="announceText"></div></div></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>Как настроено</h2></div>
+        <div class="panel rows">
+          <button class="row" onclick="go('rules')"><div class="row-main"><div class="row-title">Режим</div><div class="row-sub" id="ovMode">—</div></div><span class="go">Изменить</span></button>
+          <button class="row" onclick="go('servers')"><div class="row-main"><div class="row-title">Выбор сервера</div><div class="row-sub" id="ovSelect">—</div></div><span class="go">Изменить</span></button>
+          <button class="row" onclick="go('devices')"><div class="row-main"><div class="row-title">Устройства</div><div class="row-sub" id="ovDevices">—</div></div><span class="go">Изменить</span></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ Серверы ============ -->
+    <section data-page="servers" hidden>
+      <div class="page-head">
+        <div><h1>Серверы</h1><p id="srvCount">Серверы из вашей подписки.</p></div>
+        <button class="btn" id="pingBtn" onclick="pingServers()">Замерить задержку</button>
+      </div>
+      <div class="choice" id="selectChoice">
+        <label><input type="radio" name="sel" value="speed" /><b>Самый быстрый</b>
+          <small id="speedHint">Раз в 15 минут роутер меряет реальную скорость каждого сервера и переключается на лучший. Рекомендуется.</small></label>
+        <label><input type="radio" name="sel" value="auto" /><b>С наименьшей задержкой</b>
+          <small>Выбор по пингу раз в минуту. Быстро реагирует, но не замечает серверы, где данные «застревают».</small></label>
+        <label><input type="radio" name="sel" value="manual" /><b>Один сервер</b>
+          <small>Всегда выбранный в списке ниже.</small></label>
+      </div>
+      <div class="section">
+        <div class="panel rows" id="serverList"><div class="row"><span class="hint">Загрузка…</span></div></div>
+      </div>
+    </section>
+
+    <!-- ============ Устройства ============ -->
+    <section data-page="devices" hidden>
+      <div class="page-head">
+        <div><h1>Устройства</h1><p>Включите VPN тем, кому он нужен. Остальные ходят в интернет напрямую.</p></div>
+        <button class="btn" onclick="loadDevices()">Обновить список</button>
+      </div>
+      <div class="panel rows" id="deviceList"><div class="row"><span class="hint">Загрузка…</span></div></div>
+    </section>
+
+    <!-- ============ Правила ============ -->
+    <section data-page="rules" hidden>
+      <div class="page-head"><div><h1>Правила</h1><p>Что идёт через VPN, а что напрямую.</p></div></div>
+      <div class="choice" id="modeChoice">
+        <label><input type="radio" name="mode" value="blocked" /><b>Только заблокированные</b>
+          <small>Через VPN — недоступные в России сайты и сервисы (базы XKeen) и ваш список ниже. Всё остальное, включая банки и Госуслуги, напрямую на полной скорости.</small></label>
+        <label><input type="radio" name="mode" value="except_ru" /><b>Всё, кроме российских</b>
+          <small>Через VPN весь зарубежный интернет. Напрямую — сайты .ru и .рф, Яндекс, VK, Госуслуги и российские адреса.</small></label>
+        <label><input type="radio" name="mode" value="full" /><b>Всё через VPN</b>
+          <small>Весь трафик домашней сети через VPN. Торренты всё равно идут напрямую.</small></label>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>Всегда через VPN</h2><span class="hint">в режиме «Только заблокированные»</span></div>
+        <div class="panel rows">
+          <div class="row"><div class="row-main"><div class="row-title">Нейросети</div><div class="row-sub">ChatGPT, Claude, Gemini, Perplexity, Grok, Midjourney</div></div><label class="switch"><input type="checkbox" class="preset" value="ai" aria-label="Нейросети" /><span></span></label></div>
+          <div class="row"><div class="row-main"><div class="row-title">Соцсети и мессенджеры</div><div class="row-sub">Instagram, Facebook, X, LinkedIn, WhatsApp, Signal</div></div><label class="switch"><input type="checkbox" class="preset" value="social" aria-label="Соцсети и мессенджеры" /><span></span></label></div>
+          <div class="row"><div class="row-main"><div class="row-title">Игры и Discord</div><div class="row-sub">Discord, Roblox</div></div><label class="switch"><input type="checkbox" class="preset" value="games" aria-label="Игры и Discord" /><span></span></label></div>
+          <div class="row"><div class="row-main"><div class="row-title">Видео и музыка</div><div class="row-sub">YouTube, Netflix, Spotify, Twitch, SoundCloud</div></div><label class="switch"><input type="checkbox" class="preset" value="streaming" aria-label="Видео и музыка" /><span></span></label></div>
+          <label class="field"><span>Свои сайты</span><input class="input" id="vpnDomains" placeholder="2ip.ru, example.com" /><small>Через запятую. Поддомены включаются сами.</small></label>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>Всегда напрямую</h2></div>
+        <div class="panel rows">
+          <label class="field"><span>Сайты</span><input class="input" id="directDomains" placeholder="sberbank.ru, gosuslugi.ru" /><small>Эти сайты не пойдут через VPN ни в одном режиме.</small></label>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>Дополнительно</h2></div>
+        <div class="panel rows">
+          <div class="row"><div class="row-main"><div class="row-title">Голосовые звонки Discord</div><div class="row-sub">Звук звонков через VPN</div></div><label class="switch"><input type="checkbox" id="discordVoice" aria-label="Звонки Discord" /><span></span></label></div>
+          <div class="row"><div class="row-main"><div class="row-title">Блокировать рекламу</div><div class="row-sub">Рекламные и следящие домены</div></div><label class="switch"><input type="checkbox" id="blockAds" aria-label="Блокировать рекламу" /><span></span></label></div>
+          <div class="row"><div class="row-main"><div class="row-title">Отключить QUIC</div><div class="row-sub">Помогает, если видео в браузере подтормаживает</div></div><label class="switch"><input type="checkbox" id="blockQuic" aria-label="Отключить QUIC" /><span></span></label></div>
+        </div>
+      </div>
+
+      <div class="savebar"><span class="hint">Роутер применит правила и проверит, что VPN работает.</span><button class="btn primary" onclick="saveRules()">Сохранить правила</button></div>
+    </section>
+
+    <!-- ============ Настройки ============ -->
+    <section data-page="settings" hidden>
+      <div class="page-head"><div><h1>Настройки</h1></div></div>
+
+      <div class="section-head"><h2>Подписка</h2></div>
+      <div class="panel rows">
+        <label class="field"><span>Ссылка на подписку</span>
+          <div class="input-group">
+            <input class="input" id="subUrl" type="password" autocomplete="off" spellcheck="false" placeholder="https://…" />
+            <button class="btn" type="button" onclick="toggleSecret('subUrl', this)">Показать</button>
+          </div>
+          <small>Из личного кабинета VPN-сервиса — та же ссылка, что для приложения Happ.</small>
+        </label>
+        <details class="more"><summary>Ключи вручную: vless://, vmess://, trojan://, ss://</summary>
+          <label class="field" style="padding-top:0"><textarea class="input" id="manualLinks" spellcheck="false" placeholder="По одному ключу в строке"></textarea></label>
+        </details>
+        <div class="row"><div class="row-main"><div class="row-title">Обновлять каждый день</div><div class="row-sub">В 04:00 и после включения роутера</div></div><label class="switch"><input type="checkbox" id="autoUpdate" aria-label="Обновлять каждый день" /><span></span></label></div>
+        <div class="row"><div class="row-main"></div><div class="row-end"><button class="btn primary" onclick="saveSubscription()">Сохранить и подключить</button></div></div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>Уведомления в Telegram</h2></div>
+        <div class="panel rows">
+          <div class="row"><div class="row-main"><div class="row-sub" style="margin:0">Напишем, если VPN перестал работать, подписка не обновилась или скоро закончится. Создайте бота у @BotFather, вставьте его токен, отправьте боту любое сообщение и нажмите «Найти чат».</div></div></div>
+          <label class="field"><span>Токен бота</span><input class="input" id="tgToken" type="password" autocomplete="off" placeholder="123456789:AA…" /></label>
+          <label class="field"><span>Чат</span>
+            <div class="input-group"><input class="input" id="tgChat" placeholder="Заполнится сам" /><button class="btn" type="button" onclick="findChat()">Найти чат</button></div>
+          </label>
+          <div class="row"><div class="row-main"><div class="row-title">Присылать уведомления</div></div><label class="switch"><input type="checkbox" id="notifyOn" aria-label="Присылать уведомления" /><span></span></label></div>
+          <div class="row"><div class="row-main"></div><div class="row-end"><button class="btn" onclick="testNotify()">Отправить тест</button><button class="btn primary" onclick="saveNotify()">Сохранить</button></div></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>Защита</h2></div>
+        <div class="panel rows">
+          <div class="row"><div class="row-main"><div class="row-title">Kill switch</div><div class="row-sub" id="ksSub">Если VPN упал, заблокированные сайты не откроются в обход.</div></div><label class="switch"><input type="checkbox" id="ksOn" aria-label="Kill switch" /><span></span></label></div>
+          <div class="row"><div class="row-main"><div class="row-title">Последний рабочий конфиг</div><div class="row-sub" id="goodSub">После каждого изменения роутер проверяет VPN и при сбое сам возвращает рабочий конфиг.</div></div><button class="btn" onclick="rollback()">Вернуть</button></div>
+          <div class="row"><div class="row-main"><div class="row-title">Пароль панели</div></div><button class="btn" onclick="openAuth('change')">Сменить</button></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>Обновления</h2></div>
+        <div class="panel">
+          <div class="facts" id="facts"></div>
+          <div class="rows" style="border-top:1px solid var(--line)">
+            <div class="row"><div class="row-main"><div class="row-title">Базы сайтов</div><div class="row-sub">Списки заблокированных доменов и адресов, обновляются и сами раз в неделю</div></div><button class="btn" onclick="runTask('update-geo')">Обновить</button></div>
+            <div class="row"><div class="row-main"><div class="row-title">Ядро Xray</div></div><button class="btn" onclick="runTask('update-xray')">Обновить</button></div>
+            <div class="row"><div class="row-main"><div class="row-title">XKeen</div></div><button class="btn" onclick="runTask('update-xkeen')">Обновить</button></div>
+            <div class="row"><div class="row-main"><div class="row-title">Эта панель</div></div><button class="btn" onclick="runTask('update-panel')">Обновить</button></div>
+          </div>
+          <pre class="log" id="taskLog" hidden></pre>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>Перенос настроек</h2></div>
+        <div class="panel rows">
+          <div class="row"><div class="row-main"><div class="row-title">Файл настроек</div><div class="row-sub">Подписка, правила, устройства и уведомления. В файле ссылка подписки — храните его как пароль.</div></div>
+            <div class="row-end"><button class="btn" onclick="exportSettings()">Скачать</button><button class="btn" onclick="$('importFile').click()">Загрузить</button></div>
+            <input type="file" id="importFile" accept=".json,application/json" hidden onchange="importSettings(this.files[0])" />
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>Для опытных</h2></div>
+        <div class="panel rows">
+          <div class="row"><div class="row-main"><div class="row-title">Перезапустить XKeen</div></div><button class="btn" onclick="service('restart')">Перезапустить</button></div>
+          <div class="row"><div class="row-main"><div class="row-title">Остановить VPN</div><div class="row-sub">До ручного включения — роутер не будет поднимать его сам</div></div><button class="btn danger" onclick="service('stop')">Остановить</button></div>
+          <details class="more"><summary>Журнал и сгенерированные конфиги Xray</summary><pre class="log" id="advLog"></pre></details>
+          <div class="row"><div class="row-main"></div><button class="btn quiet" onclick="logout()">Выйти из панели</button></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="overlay" id="authBox">
+  <form class="dialog" onsubmit="submitAuth(event)">
+    <h2 id="authTitle">Вход</h2>
+    <p id="authHint">Введите пароль панели.</p>
+    <input class="input" type="password" id="authOld" placeholder="Текущий пароль" autocomplete="current-password" />
+    <input class="input" type="password" id="authPw" placeholder="Пароль" autocomplete="current-password" />
+    <input class="input" type="password" id="authPw2" placeholder="Ещё раз" autocomplete="new-password" />
+    <div class="err" id="authErr"></div>
+    <div class="btn-row"><button class="btn primary" type="submit" id="authBtn" style="flex:1">Войти</button><button class="btn" type="button" id="authCancel" onclick="closeOverlay('authBox')">Отмена</button></div>
+  </form>
+</div>
+
+<div class="overlay" id="doctorBox" onclick="if (event.target === this) closeOverlay('doctorBox')">
+  <div class="dialog wide">
+    <h2>Диагностика</h2>
+    <p id="doctorSum">Проверяю роутер, XKeen, Xray и подписку — это 10–20 секунд.</p>
+    <div id="doctorList"></div>
+    <div class="btn-row" style="margin-top:14px"><button class="btn" onclick="copyDoctor()">Скопировать отчёт</button><button class="btn primary" onclick="closeOverlay('doctorBox')">Закрыть</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+let S = null;            // последний ответ status
+let V = null;            // версии и флаги обслуживания
+
+// Всё из подписки и роутера — недоверенный текст
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 3400);
+}
+
+async function api(action, body) {
+  const opts = { credentials: 'same-origin', headers: { 'X-Requested-With': 'xkeen-happ' } };
+  if (body !== undefined) { opts.method = 'POST'; opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+  const res = await fetch('/cgi-bin/api.cgi?action=' + action, opts);
+  let data = {};
+  try { data = await res.json(); } catch (e) {}
+  if (res.status === 401 && !['login', 'change-password'].includes(action)) { await checkAuth(); throw new Error('auth'); }
+  return data;
+}
+const quiet = e => { if (e.message !== 'auth') toast('Нет связи с роутером'); };
+
+/* ---------- навигация ---------- */
+function go(page) {
+  document.querySelectorAll('main > section').forEach(s => { s.hidden = s.dataset.page !== page; });
+  document.querySelectorAll('.nav-item').forEach(b => b.setAttribute('aria-current', b.dataset.page === page ? 'page' : 'false'));
+  if (page === 'devices' && S) loadDevices();
+  if (page === 'settings' && S) pollTask();
+  try { localStorage.setItem('xh-page', page); } catch (e) {}
+  window.scrollTo(0, 0);
+}
+document.querySelectorAll('.nav-item').forEach(b => b.addEventListener('click', () => go(b.dataset.page)));
+
+/* ---------- вход ---------- */
+let authMode = 'login';
+function openAuth(mode) {
+  authMode = mode;
+  const t = {
+    setup: ['Придумайте пароль', 'Первый вход. Пароль защищает настройки роутера от других людей в вашей сети — не короче 8 символов.', 'Сохранить пароль'],
+    login: ['Вход', 'Введите пароль панели.', 'Войти'],
+    change: ['Новый пароль', 'Введите текущий пароль и новый — не короче 8 символов.', 'Сменить пароль']
+  }[mode];
+  $('authTitle').textContent = t[0]; $('authHint').textContent = t[1]; $('authBtn').textContent = t[2];
+  $('authOld').hidden = mode !== 'change';
+  $('authPw2').hidden = mode === 'login';
+  $('authCancel').hidden = mode !== 'change';
+  $('authPw').placeholder = mode === 'login' ? 'Пароль' : 'Новый пароль';
+  ['authOld', 'authPw', 'authPw2'].forEach(id => { $(id).value = ''; });
+  $('authErr').textContent = '';
+  $('authBox').classList.add('show');
+  $(mode === 'change' ? 'authOld' : 'authPw').focus();
+}
+function closeOverlay(id) { $(id).classList.remove('show'); }
+
+async function submitAuth(ev) {
+  ev.preventDefault();
+  const pw = $('authPw').value, err = $('authErr');
+  if (authMode !== 'login' && pw !== $('authPw2').value) { err.textContent = 'Пароли не совпадают'; return; }
+  if (authMode !== 'login' && pw.length < 8) { err.textContent = 'Нужно не меньше 8 символов'; return; }
+  const action = { setup: 'setup', login: 'login', change: 'change-password' }[authMode];
+  const body = authMode === 'change' ? { old_password: $('authOld').value, new_password: pw } : { password: pw };
+  try {
+    const d = await api(action, body);
+    if (!d.ok) { err.textContent = d.message || 'Не получилось'; return; }
+    closeOverlay('authBox');
+    if (authMode === 'change') toast('Пароль изменён'); else loadAll();
+  } catch (e) { err.textContent = 'Нет связи с роутером'; }
+}
+
+async function checkAuth() {
+  const st = await api('auth-state');
+  if (!st.configured) openAuth('setup'); else if (!st.authed) openAuth('login');
+  return st.configured && st.authed;
+}
+async function logout() { try { await api('logout', {}); } catch (e) {} openAuth('login'); }
+
+/* ---------- данные ---------- */
+const modeNames = { blocked: 'Только заблокированные сайты через VPN', except_ru: 'Всё, кроме российских сайтов, через VPN', full: 'Весь трафик через VPN' };
+const flagOf = name => (String(name).match(/^(\p{Regional_Indicator}{2})/u) || [])[1] || '';
+const nameOf = name => String(name).replace(/^\p{Regional_Indicator}{2}\s*/u, '');
+const fmtGB = b => (b / 1073741824).toLocaleString('ru-RU', { maximumFractionDigits: b > 1e11 ? 0 : 1 }) + ' ГБ';
+const plural = (n, one, few, many) => n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20) ? few : many;
+
+function selectionKind() {
+  if (V && V.speed === 'on') return 'speed';
+  return (S && S.config && S.config.selection_mode) || 'auto';
+}
+
+function apply(data) {
+  if (!data || !data.config) return;
+  S = data;
+  const cfg = data.config, st = data.state || {}, r = data.router || {};
+  const model = r.model ? r.model.replace(/\s*\((\d[^)]*)\)\s*$/, '') : '';
+  $('navModel').textContent = model || 'роутер';
+  $('hopRouter').textContent = model ? model.replace(/\s*\(.*$/, '') : 'XKeen';
+
+  // подписка
+  const n = st.server_count || 0;
+  $('subTitle').textContent = n ? st.profile_title || 'Подписка' : 'Подписка не подключена';
+  const used = (st.upload_bytes || 0) + (st.download_bytes || 0);
+  const parts = [];
+  if (n) parts.push(`${n} ${plural(n, 'сервер', 'сервера', 'серверов')}`);
+  if (used) parts.push(st.total_bytes ? `использовано ${fmtGB(used)} из ${fmtGB(st.total_bytes)}` : `использовано ${fmtGB(used)}, без лимита`);
+  if (st.expire_ts) parts.push('действует до ' + new Date(st.expire_ts * 1000).toLocaleDateString('ru-RU'));
+  else if (n) parts.push('бессрочно');
+  if (st.last_updated && st.last_updated !== 'Никогда') parts.push('обновлена ' + st.last_updated);
+  $('subMeta').textContent = n ? parts.join(', ') : 'Добавьте ссылку в «Настройках».';
+  $('subMeter').hidden = !st.total_bytes;
+  if (st.total_bytes) $('subMeterFill').style.width = Math.min(100, used / st.total_bytes * 100) + '%';
+  $('announceRow').hidden = !st.announce;
+  $('announceText').textContent = st.announce ? 'Сообщение сервиса: ' + st.announce : '';
+
+  $('ovMode').textContent = modeNames[cfg.routing_mode] || '—';
+
+  // правила
+  document.querySelectorAll('#modeChoice input').forEach(i => { i.checked = i.value === cfg.routing_mode; });
+  document.querySelectorAll('.preset').forEach(i => { i.checked = (cfg.presets || []).includes(i.value); });
+  $('vpnDomains').value = cfg.custom_vpn_domains || '';
+  $('directDomains').value = cfg.custom_direct_domains || '';
+  $('discordVoice').checked = cfg.discord_voice !== false;
+  $('blockAds').checked = !!cfg.block_ads;
+  $('blockQuic').checked = !!cfg.block_quic;
+
+  // настройки
+  if (document.activeElement !== $('subUrl')) $('subUrl').value = cfg.sub_url || '';
+  $('manualLinks').value = cfg.manual_links || '';
+  $('autoUpdate').checked = cfg.auto_update !== false;
+  $('tgChat').value = cfg.tg_chat || '';
+  $('tgToken').placeholder = cfg.tg_token ? 'Сохранён. Введите новый, чтобы заменить' : '123456789:AA…';
+  $('notifyOn').checked = cfg.notify !== false;
+  $('advLog').textContent = (data.logs || '') + '\n\n// 04_outbounds.json\n' + (data.outbounds_preview || '') + '\n\n// 05_routing.json\n' + (data.routing_preview || '');
+
+  renderServers();
+  renderStatus();
+}
+
+function currentServer() {
+  const servers = (S && S.state && S.state.servers) || [];
+  return selectionKind() === 'manual' ? servers.find(s => s.tag === S.config.selected_tag) : null;
+}
+
+let vpnCheck = 'pending';   // pending | ok | fail
+function renderStatus() {
+  if (!S) return;
+  const st = S.state || {}, srv = currentServer(), kind = selectionKind();
+  const sbNode = kind === 'speed' && V && V.speed_results && (st.servers || []).find(s => s.tag === V.speed_results.node);
+  const shown = srv || sbNode;
+  $('hopServer').textContent = shown ? `${flagOf(shown.name)} ${nameOf(shown.name)}` : (st.server_count ? 'автовыбор' : 'нет');
+  $('ovSelect').textContent = kind === 'speed' ? 'Самый быстрый по замеру скорости' : kind === 'auto' ? 'С наименьшей задержкой' : (srv ? 'Всегда ' + nameOf(srv.name) : 'Один сервер');
+  $('startBtn').hidden = S.xray_running;
+
+  let state, title, sub;
+  if (!st.server_count) {
+    state = 'warn'; title = 'Подписка не подключена'; sub = 'Добавьте ссылку на подписку в «Настройках» — роутер всё настроит сам.';
+  } else if (!S.xray_running) {
+    state = 'bad'; title = 'VPN выключен'; sub = 'Xray не запущен. Включите VPN или откройте диагностику.';
+  } else if (vpnCheck === 'pending') {
+    state = 'idle'; title = 'Проверяю…'; sub = 'Отправляю тестовый запрос через VPN.';
+  } else if (vpnCheck === 'ok') {
+    state = 'ok'; title = 'VPN работает'; sub = modeNames[S.config.routing_mode] + '.';
+  } else {
+    state = 'bad'; title = 'VPN не пропускает трафик'; sub = 'Сервер не отвечает или заблокирован. Выберите другой сервер или откройте диагностику.';
+  }
+  $('statusPanel').dataset.state = state;
+  $('statusTitle').textContent = title;
+  $('statusSub').textContent = sub;
+  $('hopNet').textContent = state === 'ok' ? 'доступен' : state === 'idle' ? '…' : 'нет связи';
+  $('errNotice').hidden = !(st.last_status === 'error' && st.last_error);
+  $('errText').textContent = st.last_error ? 'Последняя ошибка: ' + st.last_error : '';
+}
+
+async function checkVpn() {
+  vpnCheck = 'pending'; renderStatus();
+  try { const d = await api('health', {}); vpnCheck = d.vpn === 'ok' ? 'ok' : 'fail'; } catch (e) { vpnCheck = 'fail'; }
+  renderStatus();
+}
+
+async function loadStatus() { try { apply(await api('status')); } catch (e) { quiet(e); } }
+
+/* ---------- серверы ---------- */
+function renderServers() {
+  const st = (S && S.state) || {}, servers = st.servers || [], kind = selectionKind();
+  document.querySelectorAll('#selectChoice input').forEach(i => {
+    i.checked = i.value === kind;
+    i.disabled = i.value === 'speed' && !!V && V.speed === 'unsupported';
+  });
+  $('speedHint').textContent = V && V.speed === 'unsupported'
+    ? 'Нужен XKeen 2.1 — обновите его в «Настройках».'
+    : 'Раз в 15 минут роутер меряет реальную скорость каждого сервера и переключается на лучший. Рекомендуется.';
+  $('srvCount').textContent = servers.length ? `${servers.length} ${plural(servers.length, 'сервер', 'сервера', 'серверов')} из подписки «${st.profile_title || ''}»` +
+    (kind === 'speed' && V && V.speed_results && V.speed_results.at ? `. Скорость замерена ${V.speed_results.at.slice(11)}.` : '.') : 'Подписка не подключена.';
+  $('pingBtn').hidden = kind === 'speed';
+  const manual = kind === 'manual';
+  const sr = (kind === 'speed' && V && V.speed_results) || null;
+  $('serverList').innerHTML = servers.map(s => {
+    let cls, pingTxt;
+    if (sr && sr.speeds && s.tag in sr.speeds) {
+      // при выборе по скорости показываем реальную скорость из последнего замера
+      const mbit = sr.speeds[s.tag] * 8 / 1000;
+      cls = mbit <= 0 ? 'dead' : mbit < 15 ? 'mid' : 'good';
+      pingTxt = mbit <= 0 ? 'не работает' : mbit.toLocaleString('ru-RU', { maximumFractionDigits: 0 }) + ' Мбит/с';
+      if (sr.node === s.tag) pingTxt += ', сейчас';
+    } else {
+      const ms = s.ping_ms;
+      cls = ms == null ? (s.alive === false ? 'dead' : '') : ms < 90 ? 'good' : ms < 200 ? 'mid' : 'dead';
+      pingTxt = ms != null ? ms + ' мс' : (s.alive === false ? 'нет ответа' : '');
+    }
+    const on = manual && S.config.selected_tag === s.tag;
+    return `<div class="list-row ${manual ? 'pick' : ''}" ${manual ? `role="radio" tabindex="0" aria-checked="${on}" data-tag="${esc(s.tag)}"` : ''}>
+      ${manual ? '<span class="radio"></span>' : ''}
+      <span class="flag">${esc(flagOf(s.name))}</span>
+      <div class="row-main"><div class="row-title">${esc(nameOf(s.name))}</div>
+        <div class="row-sub">${esc(s.protocol)}, ${esc(s.network)}${s.security && s.security !== 'none' ? ', ' + esc(s.security) : ''}</div></div>
+      <span class="ms ${cls}">${esc(pingTxt)}</span></div>`;
+  }).join('') || '<div class="row"><span class="hint">Серверов пока нет — добавьте подписку в «Настройках».</span></div>';
+}
+
+$('serverList').addEventListener('click', e => { const r = e.target.closest('[data-tag]'); if (r) pickServer(r.dataset.tag); });
+$('serverList').addEventListener('keydown', e => { const r = e.target.closest('[data-tag]'); if (r && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pickServer(r.dataset.tag); } });
+document.querySelectorAll('#selectChoice input').forEach(i => i.addEventListener('change', () => setSelection(i.value)));
+
+async function pickServer(tag) {
+  toast('Переключаю и проверяю VPN…');
+  try { const d = await api('select', { selection_mode: 'manual', selected_tag: tag }); apply(d); toast(d.ok ? 'Сервер выбран' : (d.message || 'Ошибка')); checkVpn(); } catch (e) { quiet(e); }
+}
+
+async function setSelection(kind) {
+  try {
+    if (kind === 'speed') {
+      const d = await api('task', { name: 'speed-on' });
+      toast(d.ok ? 'Включаю выбор по скорости — первый замер займёт около минуты' : (d.message || 'Ошибка'));
+      if (d.ok) waitTask(async () => { await loadVersions(); await loadStatus(); checkVpn(); });
+      return;
+    }
+    if (V && V.speed === 'on') {
+      await api('task', { name: 'speed-off' });
+      await new Promise(r => waitTask(r));
+    }
+    const servers = (S.state && S.state.servers) || [];
+    const tag = S.config.selected_tag || (servers[0] && servers[0].tag) || 'proxy-1';
+    toast('Применяю и проверяю VPN…');
+    const d = await api('select', { selection_mode: kind, selected_tag: tag });
+    apply(d); await loadVersions(); checkVpn();
+  } catch (e) { quiet(e); }
+}
+
+async function pingServers() {
+  toast('Меряю задержку до серверов…');
+  try { apply(await api('ping', {})); toast('Готово'); } catch (e) { quiet(e); }
+}
+
+/* ---------- устройства ---------- */
+async function loadDevices() {
+  const box = $('deviceList');
+  try {
+    const d = await api('devices', {});
+    if (!d.ok) { box.innerHTML = `<div class="row"><span class="hint">${esc(d.message || 'Роутер не ответил')}</span></div>`; return; }
+    const row = x => `<div class="list-row ${x.active ? '' : 'muted-row'}">
+        <div class="row-main"><div class="row-title">${esc(x.name)}</div>
+        <div class="row-sub">${x.active ? esc(x.ip) : 'не в сети'}</div></div>
+        <span class="tag">${x.mode === 'vpn' ? 'через VPN' : 'напрямую'}</span>
+        <label class="switch"><input type="checkbox" ${x.mode === 'vpn' ? 'checked' : ''} data-mac="${esc(x.mac)}" aria-label="VPN для ${esc(x.name)}" /><span></span></label>
+      </div>`;
+    const on = d.devices.filter(x => x.active), off = d.devices.filter(x => !x.active);
+    box.innerHTML = (on.map(row).join('') || '<div class="row"><span class="hint">Нет устройств в сети</span></div>') +
+      (off.length ? `<details class="more"><summary>Не в сети: ${off.length}</summary><div class="rows">${off.map(row).join('')}</div></details>` : '');
+    const vpnN = on.filter(x => x.mode === 'vpn').length;
+    $('ovDevices').textContent = on.length ? `${vpnN} из ${on.length} в сети используют VPN` : 'Нет устройств в сети';
+    $('hopHome').textContent = on.length ? `${on.length} ${plural(on.length, 'устройство', 'устройства', 'устройств')}` : 'устройства';
+  } catch (e) { if (e.message !== 'auth') box.innerHTML = '<div class="row"><span class="hint">Нет связи с роутером</span></div>'; }
+}
+$('deviceList').addEventListener('change', async e => {
+  const i = e.target.closest('input[data-mac]'); if (!i) return;
+  i.disabled = true;
+  try {
+    const d = await api('device-set', { mac: i.dataset.mac, mode: i.checked ? 'vpn' : 'direct' });
+    toast(d.ok ? (i.checked ? 'Устройство работает через VPN' : 'Устройство ходит напрямую') : (d.message || 'Ошибка'));
+  } catch (err) { quiet(err); }
+  loadDevices();
+});
+
+/* ---------- правила и подписка ---------- */
+async function saveRules() {
+  const body = {
+    routing_mode: (document.querySelector('#modeChoice input:checked') || {}).value || 'blocked',
+    presets: [...document.querySelectorAll('.preset:checked')].map(i => i.value),
+    custom_vpn_domains: $('vpnDomains').value.trim(),
+    custom_direct_domains: $('directDomains').value.trim(),
+    discord_voice: $('discordVoice').checked, block_ads: $('blockAds').checked, block_quic: $('blockQuic').checked
+  };
+  toast('Применяю правила и проверяю VPN…');
+  try { const d = await api('save', body); apply(d); toast(d.ok ? 'Правила сохранены' : (d.message || 'Ошибка')); checkVpn(); } catch (e) { quiet(e); }
+}
+
+async function saveSubscription() {
+  const body = { sub_url: $('subUrl').value.trim(), manual_links: $('manualLinks').value.trim(), auto_update: $('autoUpdate').checked, fetch_now: true };
+  toast('Скачиваю подписку и проверяю VPN…');
+  try { const d = await api('save', body); apply(d); toast(d.ok ? 'Подписка подключена' : (d.message || 'Ошибка')); if (d.ok) checkVpn(); } catch (e) { quiet(e); }
+}
+
+async function updateSub() {
+  toast('Обновляю подписку…');
+  try { const d = await api('update', {}); apply(d); toast(d.ok ? 'Подписка обновлена' : (d.message || 'Ошибка')); checkVpn(); } catch (e) { quiet(e); }
+}
+
+function toggleSecret(id, btn) {
+  const i = $(id), show = i.type === 'password';
+  i.type = show ? 'text' : 'password'; btn.textContent = show ? 'Скрыть' : 'Показать';
+}
+
+/* ---------- уведомления ---------- */
+async function saveNotify() {
+  const body = { tg_chat: $('tgChat').value.trim(), notify: $('notifyOn').checked };
+  if ($('tgToken').value.trim()) body.tg_token = $('tgToken').value.trim();
+  try { const d = await api('save', body); $('tgToken').value = ''; apply(d); toast(d.ok ? 'Сохранено' : (d.message || 'Ошибка')); } catch (e) { quiet(e); }
+}
+async function findChat() {
+  try {
+    if ($('tgToken').value.trim()) await api('save', { tg_token: $('tgToken').value.trim() });
+    const d = await api('find-chat', {});
+    if (d.ok) $('tgChat').value = d.tg_chat;
+    toast(d.message || 'Готово');
+  } catch (e) { quiet(e); }
+}
+async function testNotify() { try { const d = await api('notify-test', {}); toast(d.message || 'Готово'); } catch (e) { quiet(e); } }
+
+/* ---------- обслуживание ---------- */
+async function loadVersions() {
+  try {
+    V = await api('versions', {});
+    $('facts').innerHTML = [['XKeen', V.xkeen], ['Xray', V.xray], ['Панель', V.panel], ['Базы сайтов', V.geo]]
+      .map(([k, v]) => `<div><span>${k}</span><b>${esc(v || '—')}</b></div>`).join('');
+    $('navVer').textContent = `XKeen ${V.xkeen || '?'}, Xray ${V.xray || '?'}`;
+    const ks = $('ksOn');
+    ks.disabled = V.killswitch === 'unsupported'; ks.checked = V.killswitch === 'on';
+    $('ksSub').textContent = V.killswitch === 'unsupported' ? 'Нужен XKeen 2.1 — обновите его ниже.' : 'Если VPN упал, заблокированные сайты не откроются в обход.';
+    $('goodSub').textContent = V.good_saved ? `Сохранён ${V.good_saved}. Если после изменения VPN не заработает, роутер сам вернёт его.` : 'Появится после первого успешного подключения подписки.';
+    renderServers(); renderStatus();
+  } catch (e) {}
+}
+$('ksOn').addEventListener('change', async e => {
+  try { const d = await api('killswitch', { state: e.target.checked ? 'on' : 'off' }); toast(d.message || 'Готово'); } catch (err) { quiet(err); }
+  loadVersions();
+});
+
+const taskNames = { 'update-geo': 'Обновление баз сайтов', 'update-xray': 'Обновление Xray', 'update-xkeen': 'Обновление XKeen',
+  'update-panel': 'Обновление панели', 'speed-on': 'Включение выбора по скорости', 'speed-off': 'Выключение выбора по скорости' };
+let taskTimer = null, taskDone = null;
+async function runTask(name) {
+  if (!confirm(taskNames[name] + '. VPN может прерваться на минуту. Продолжить?')) return;
+  try { const d = await api('task', { name }); if (!d.ok) { toast(d.message || 'Ошибка'); return; } pollTask(); } catch (e) { quiet(e); }
+}
+function waitTask(done) { taskDone = done; pollTask(); }
+async function pollTask() {
+  clearTimeout(taskTimer);
+  try {
+    const t = await api('task-status', {});
+    if (t.state === 'none') return;
+    const log = $('taskLog');
+    log.hidden = false;
+    log.textContent = `${taskNames[t.name] || t.name}: ${t.state === 'running' ? 'выполняется…' : t.state === 'ok' ? 'готово' : 'ошибка'}\n\n${t.log || ''}`;
+    if (t.state === 'running') { taskTimer = setTimeout(pollTask, 3000); return; }
+    if (taskDone) { const f = taskDone; taskDone = null; f(); }
+    loadVersions();
+  } catch (e) {}
+}
+
+async function rollback() {
+  if (!confirm('Вернуть последний рабочий конфиг Xray?')) return;
+  try { const d = await api('rollback', {}); apply(d); toast(d.message || 'Готово'); checkVpn(); } catch (e) { quiet(e); }
+}
+
+async function service(cmd) {
+  if (cmd === 'stop' && !confirm('Остановить VPN? Сайты, которые идут через VPN, перестанут открываться.')) return;
+  try { const d = await api('service', { command: cmd }); toast(d.message || 'Готово'); setTimeout(() => { loadStatus(); checkVpn(); }, 6000); } catch (e) { quiet(e); }
+}
+
+async function exportSettings() {
+  try {
+    const d = await api('export', {});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' }));
+    a.download = 'xkeen-happ-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click(); URL.revokeObjectURL(a.href);
+  } catch (e) { quiet(e); }
+}
+async function importSettings(file) {
+  if (!file) return;
+  let data; try { data = JSON.parse(await file.text()); } catch (e) { toast('Это не файл настроек'); return; }
+  if (!confirm('Заменить текущие настройки настройками из файла?')) return;
+  toast('Загружаю настройки и обновляю подписку…');
+  try { const d = await api('import', data); apply(d); toast(d.message || 'Готово'); loadDevices(); checkVpn(); } catch (e) { quiet(e); }
+  $('importFile').value = '';
+}
+
+/* ---------- диагностика ---------- */
+let doctorText = '';
+async function openDoctor() {
+  $('doctorSum').textContent = 'Проверяю роутер, XKeen, Xray и подписку — это 10–20 секунд.';
+  $('doctorList').innerHTML = '';
+  $('doctorBox').classList.add('show');
+  try {
+    const d = await api('doctor', {});
+    if (!d.checks) throw new Error(d.message || 'нет ответа');
+    const icon = { ok: '✅', warn: '⚠️', fail: '❌', info: 'ℹ️' };
+    $('doctorSum').textContent = d.fail ? `Проблем: ${d.fail}. Предупреждений: ${d.warn}.` : (d.warn ? `Проблем нет. Предупреждений: ${d.warn}.` : 'Всё в порядке.');
+    $('doctorList').innerHTML = d.checks.map(c => `<div class="check"><i>${icon[c.status] || '•'}</i><div><b>${esc(c.name)}</b><span>${esc(c.detail)}</span></div></div>`).join('');
+    doctorText = d.checks.map(c => `${icon[c.status] || '•'} ${c.name}: ${c.detail}`).join('\n');
+  } catch (e) { if (e.message !== 'auth') $('doctorSum').textContent = 'Не удалось выполнить: ' + e.message; }
+}
+function copyDoctor() {
+  const ta = document.createElement('textarea'); ta.value = doctorText; document.body.appendChild(ta); ta.select();
+  const ok = document.execCommand('copy'); ta.remove(); toast(ok ? 'Отчёт скопирован' : 'Не получилось скопировать');
+}
+
+/* ---------- старт ---------- */
+async function loadAll() {
+  await loadVersions();
+  await loadStatus();
+  checkVpn();
+  loadDevices();
+  pollTask();
+}
+let start = 'overview';
+try { start = localStorage.getItem('xh-page') || 'overview'; } catch (e) {}
+go(['overview', 'servers', 'devices', 'rules', 'settings'].includes(start) ? start : 'overview');
+checkAuth().then(ok => { if (ok) loadAll(); }).catch(() => toast('Нет связи с роутером'));
+</script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+#!/bin/sh
+# ==============================================================================
+# install.sh — установка XKeen Happ @VERSION@ на Keenetic / Netcraze,
+# где уже работает Entware (подключение по SSH, порт 222).
+#
+#   sh install.sh                       — установить, подписку вставить в панели
+#   sh install.sh --sub "https://..."   — сразу с подпиской
+#   Доп. параметры: --mode blocked|except_ru|full, --select auto|manual,
+#                   --skip-xkeen, --no-dns, --no-policy
+#
+# Можно и одной командой: curl -fsSL <ссылка> | sh -s -- --sub "https://..."
+#
+# Подходит для любой архитектуры (aarch64, mipsel, mips): сам скрипт — sh,
+# а XKeen и Xray скачиваются под процессор роутера.
+# ==============================================================================
+
+export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+printf '\033[1;32mXKeen Happ @VERSION@ — установка\033[0m\n'
+
+if [ ! -d /opt ] || ! command -v opkg >/dev/null 2>&1; then
+    echo "Ошибка: Entware не найден. Сначала установите Entware (см. README, способ «Флешка»)." >&2
+    exit 1
+fi
+
+arch=$(opkg print-architecture 2>/dev/null | awk '$2 !~ /^all$/ {print $2; exit}')
+echo "Архитектура Entware: ${arch:-неизвестна}"
+
+command -v base64 >/dev/null 2>&1 || { opkg update >/dev/null 2>&1; opkg install coreutils-base64 >/dev/null 2>&1; }
+
+echo "Распаковка файлов XKeen Happ в /opt ..."
+# Файлы вшиты в here-document — работает и «sh файл», и «curl … | sh»
+base64 -d <<'__XKEEN_HAPP_PAYLOAD__' | gzip -dc | tar -xf - -C /opt || { echo "Ошибка: не удалось распаковать файлы (скачайте установщик заново)" >&2; exit 1; }
+@PAYLOAD@
+__XKEEN_HAPP_PAYLOAD__
+
+chmod 755 /opt/bin/xkeen-sub /opt/bin/xkeen-rci-setup /opt/bin/xkeen-happ-setup /opt/bin/xkeen-happ-uninstall /opt/bin/xkeen-happ-doctor /opt/bin/xkeen-happ-ctl \
+          /opt/etc/init.d/S99xkeen-happ /opt/share/xkeen-happ/www/cgi-bin/api.cgi
+# Установка по SSH не нуждается в загрузочном скрипте флешки
+rm -f /opt/etc/init.d/S98xkeen-happ-bootstrap
+
+exec /opt/bin/xkeen-happ-setup "$@" </dev/null

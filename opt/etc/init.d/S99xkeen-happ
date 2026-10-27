@@ -1,0 +1,118 @@
+#!/bin/sh
+# ==============================================================================
+# S99xkeen-happ — служба веб-панели XKeen Happ UI (lighttpd + CGI, порт 8099)
+# ==============================================================================
+
+export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+OPT_DIR="${XKEEN_OPT_DIR:-/opt}"
+WWW_DIR="$OPT_DIR/share/xkeen-happ/www"
+CONF_FILE="$OPT_DIR/etc/xkeen-happ/config.json"
+RUN_DIR="$OPT_DIR/var/run/xkeen-happ"
+LCONF="$RUN_DIR/lighttpd.conf"
+PID_FILE="$RUN_DIR/httpd.pid"
+LOG="$OPT_DIR/var/log/xkeen-happ-httpd.log"
+PORT=8099
+
+if [ -f "$CONF_FILE" ] && command -v jq >/dev/null 2>&1; then
+    p=$(jq -r '.ui_port // 8099' "$CONF_FILE" 2>/dev/null)
+    [ "$p" -gt 0 ] 2>/dev/null && [ "$p" -lt 65536 ] && PORT="$p"
+fi
+
+# Панель слушает только адрес домашней сети (Bridge0 / br0), а не все интерфейсы
+lan_ip() {
+    ip -4 addr show br0 2>/dev/null | awk '/inet / {split($2, a, "/"); print a[1]; exit}'
+}
+
+is_running() {
+    [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null
+}
+
+write_lighttpd_conf() {
+    cat > "$LCONF" <<L_EOF
+server.document-root = "$WWW_DIR"
+server.port = $PORT
+server.bind = "$1"
+server.pid-file = "$PID_FILE"
+server.errorlog = "$LOG"
+server.max-request-size = 256
+server.modules = ( "mod_cgi", "mod_setenv" )
+index-file.names = ( "index.html" )
+cgi.assign = ( ".cgi" => "" )
+mimetype.assign = (
+  ".html" => "text/html; charset=utf-8",
+  ".css"  => "text/css",
+  ".js"   => "application/javascript",
+  ".json" => "application/json",
+  ".png"  => "image/png",
+  ".svg"  => "image/svg+xml",
+  ".woff2" => "font/woff2"
+)
+setenv.add-response-header = (
+  "X-Frame-Options" => "DENY",
+  "X-Content-Type-Options" => "nosniff",
+  "Referrer-Policy" => "no-referrer",
+  "Content-Security-Policy" => "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'"
+)
+L_EOF
+}
+
+start_service() {
+    if is_running; then
+        echo "XKeen Happ UI уже запущен (порт $PORT)"
+        return 0
+    fi
+    mkdir -p "$RUN_DIR" "$OPT_DIR/var/log"
+    chmod 700 "$RUN_DIR"
+    chmod 755 "$WWW_DIR/cgi-bin/api.cgi" "$OPT_DIR/bin/xkeen-sub" "$OPT_DIR/bin/xkeen-rci-setup" 2>/dev/null
+
+    command -v lighttpd >/dev/null 2>&1 || {
+        echo "Ошибка: нет веб-сервера. Установите: opkg install lighttpd lighttpd-mod-cgi lighttpd-mod-setenv" >&2
+        return 1
+    }
+    # Без адреса домашней сети не стартуем: слушать все интерфейсы (и WAN) нельзя
+    bind="" n=0
+    while [ -z "$bind" ] && [ "$n" -lt 30 ]; do
+        bind="$(lan_ip)"
+        [ -z "$bind" ] && { sleep 2; n=$((n + 1)); }
+    done
+    [ -n "$bind" ] || { echo "Ошибка: нет адреса у br0 (домашняя сеть), панель не запущена" >&2; return 1; }
+    write_lighttpd_conf "$bind"
+    lighttpd -f "$LCONF" || { echo "Ошибка запуска lighttpd, см. $LOG" >&2; return 1; }
+
+    "$OPT_DIR/bin/xkeen-sub" cron >/dev/null 2>&1
+
+    # После загрузки роутера подписка обновляется в фоне, когда поднимется сеть
+    if [ "${1:-}" != "--no-boot-fetch" ]; then
+        (sleep 60 && "$OPT_DIR/bin/xkeen-sub" cron-update >/dev/null 2>&1) &
+    fi
+
+    ip_addr="$(lan_ip)"
+    echo "XKeen Happ UI запущен: http://${ip_addr:-192.168.1.1}:$PORT"
+}
+
+stop_service() {
+    if [ -f "$PID_FILE" ]; then
+        kill "$(cat "$PID_FILE" 2>/dev/null)" 2>/dev/null
+        rm -f "$PID_FILE"
+    fi
+    echo "XKeen Happ UI остановлен"
+}
+
+case "${1:-start}" in
+    start)   start_service "${2:-}" ;;
+    stop)    stop_service ;;
+    restart) stop_service; sleep 1; start_service "--no-boot-fetch" ;;
+    status)
+        if is_running; then
+            echo "XKeen Happ UI работает на порту $PORT"
+        else
+            echo "XKeen Happ UI остановлен"
+            exit 1
+        fi
+        ;;
+    *)
+        echo "Использование: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac

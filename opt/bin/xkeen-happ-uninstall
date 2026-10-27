@@ -1,0 +1,39 @@
+#!/bin/sh
+# ==============================================================================
+# xkeen-happ-uninstall — удаление панели XKeen Happ.
+#   xkeen-happ-uninstall          — удалить панель, менеджер подписок и задачу cron;
+#                                   XKeen и Xray остаются
+#   xkeen-happ-uninstall --all    — то же + полное удаление XKeen (xkeen -remove)
+# Политику XKeen в роутере скрипт не трогает: её удаляют в веб-интерфейсе роутера
+# («Приоритеты подключений»), вернув домашней сети политику по умолчанию.
+# ==============================================================================
+
+export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+OPT_DIR="${XKEEN_OPT_DIR:-/opt}"
+
+/opt/etc/init.d/S99xkeen-happ stop 2>/dev/null
+
+cron_file="$OPT_DIR/var/spool/cron/crontabs/root"
+if [ -f "$cron_file" ]; then
+    grep -v "xkeen-sub cron-update\|xkeen-sub watchdog" "$cron_file" > "$cron_file.tmp"
+    mv "$cron_file.tmp" "$cron_file"
+fi
+
+rm -f "$OPT_DIR/etc/init.d/S99xkeen-happ" \
+      "$OPT_DIR/etc/init.d/S98xkeen-happ-bootstrap" \
+      "$OPT_DIR/bin/xkeen-sub" \
+      "$OPT_DIR/bin/xkeen-rci-setup" \
+      "$OPT_DIR/bin/xkeen-happ-setup" \
+      "$OPT_DIR/bin/xkeen-happ-doctor" \
+      "$OPT_DIR/bin/xkeen-happ-ctl"
+rm -rf "$OPT_DIR/share/xkeen-happ" "$OPT_DIR/var/run/xkeen-happ" "$OPT_DIR/etc/xkeen-happ"
+rm -f "$OPT_DIR/etc/xray/configs/07_observatory.json" "$OPT_DIR/etc/xray/configs/08_happ_check.json"
+
+if [ "${1:-}" = "--all" ] && [ -x "$OPT_DIR/sbin/xkeen" ]; then
+    "$OPT_DIR/sbin/xkeen" -remove
+else
+    echo "Конфиги Xray (04_outbounds.json, 05_routing.json) оставлены — XKeen продолжит работать с последней подпиской."
+fi
+
+rm -f "$0"
+echo "XKeen Happ удалён."

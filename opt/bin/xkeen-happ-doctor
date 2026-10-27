@@ -1,0 +1,192 @@
+#!/bin/sh
+# ==============================================================================
+# xkeen-happ-doctor — проверка всей цепочки: прошивка, Entware, пакеты, XKeen,
+# Xray, политика, подписка, сеть. Ничего не меняет.
+#   xkeen-happ-doctor          — отчёт текстом (удобно прислать в поддержку)
+#   xkeen-happ-doctor --json   — то же в JSON (для кнопки «Диагностика» в панели)
+# ==============================================================================
+
+export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export LC_ALL=C
+
+OPT_DIR="${XKEEN_OPT_DIR:-/opt}"
+HAPP_DIR="$OPT_DIR/etc/xkeen-happ"
+CONF_DIR="$OPT_DIR/etc/xray/configs"
+JSON=0
+[ "${1:-}" = "--json" ] && JSON=1
+
+RESULTS=""
+n_fail=0; n_warn=0
+
+# res <ok|warn|fail|info> <проверка> <подробности>
+res() {
+    case "$1" in fail) n_fail=$((n_fail + 1)) ;; warn) n_warn=$((n_warn + 1)) ;; esac
+    if [ "$JSON" = "1" ]; then
+        RESULTS="$RESULTS$(jq -nc --arg s "$1" --arg n "$2" --arg d "$3" '{status: $s, name: $n, detail: $d}')
+"
+    else
+        case "$1" in
+            ok)   mark='\033[32m  OK \033[0m' ;;
+            warn) mark='\033[33mWARN \033[0m' ;;
+            fail) mark='\033[31mFAIL \033[0m' ;;
+            *)    mark='\033[36m  ·  \033[0m' ;;
+        esac
+        printf "$mark %s: %s\n" "$2" "$3"
+    fi
+}
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# --- Роутер ---------------------------------------------------------------------
+ver=$(curl -s -m 4 http://127.0.0.1:79/rci/show/version 2>/dev/null)
+if [ -n "$ver" ] && have jq; then
+    res info "Роутер" "$(printf '%s' "$ver" | jq -r '"\(.model // "?") (\(.hw_id // "?")), KeeneticOS \(.release // .title // "?"), \(.arch // "")"' 2>/dev/null)"
+else
+    res warn "Роутер" "RCI 127.0.0.1:79 не ответил — модель и политики не проверить"
+fi
+
+year=$(date +%Y)
+if [ "$year" -ge 2025 ] 2>/dev/null; then
+    res ok "Время" "$(date '+%F %T %Z')"
+else
+    res fail "Время" "$(date '+%F %T') — часы сбиты, HTTPS не будет работать (включите NTP)"
+fi
+
+# --- Entware ----------------------------------------------------------------------
+fs=$(mount | awk '$3 == "/opt" {print $5; exit}')
+free=$(df -h /opt 2>/dev/null | awk 'NR == 2 {print $4}')
+arch=$(opkg print-architecture 2>/dev/null | awk '$2 !~ /^all$/ {a = $2} END {print a}')
+case "$fs" in
+    ext*) res ok "Entware" "/opt на $fs, свободно $free, $arch" ;;
+    "")   res fail "Entware" "/opt не смонтирован" ;;
+    *)    res warn "Entware" "/opt на $fs (нужен ext4), свободно $free" ;;
+esac
+
+missing=""
+for b in curl jq lighttpd; do have "$b" || missing="$missing $b"; done
+[ -s "$OPT_DIR/etc/ssl/certs/ca-certificates.crt" ] || missing="$missing ca-bundle"
+if [ -z "$missing" ]; then
+    res ok "Пакеты" "curl, jq, lighttpd, ca-bundle"
+else
+    res fail "Пакеты" "нет:$missing — opkg install$missing"
+fi
+
+if pidof crond >/dev/null 2>&1; then
+    res ok "Планировщик cron" "работает"
+else
+    res warn "Планировщик cron" "не запущен — автообновление подписки не сработает (/opt/etc/init.d/S10cron start)"
+fi
+
+# --- Панель -----------------------------------------------------------------------
+if "$OPT_DIR/etc/init.d/S99xkeen-happ" status >/dev/null 2>&1; then
+    res ok "Панель" "lighttpd работает, порт $(jq -r '.ui_port // 8099' "$HAPP_DIR/config.json" 2>/dev/null)"
+else
+    res fail "Панель" "не запущена — /opt/etc/init.d/S99xkeen-happ start"
+fi
+if [ -s "$HAPP_DIR/auth.json" ]; then
+    res ok "Пароль панели" "задан"
+else
+    res warn "Пароль панели" "не задан — откройте панель и задайте"
+fi
+
+# --- XKeen и Xray -------------------------------------------------------------------
+if [ -x "$OPT_DIR/sbin/xkeen" ]; then
+    res ok "XKeen" "$("$OPT_DIR/sbin/xkeen" -v 2>/dev/null | head -n 1 | tr -d '\033' | sed 's/\[[0-9;]*m//g')"
+else
+    res fail "XKeen" "не установлен — /opt/bin/xkeen-happ-setup"
+fi
+
+if [ -x "$OPT_DIR/sbin/xray" ]; then
+    xv=$("$OPT_DIR/sbin/xray" version 2>/dev/null | head -n 1 | awk '{print $2}')
+    if pidof xray >/dev/null 2>&1; then
+        res ok "Xray" "$xv, работает"
+    else
+        res fail "Xray" "$xv, НЕ запущен — xkeen -start"
+    fi
+    if out=$(XRAY_LOCATION_ASSET="$OPT_DIR/etc/xray/dat" "$OPT_DIR/sbin/xray" run -test -confdir "$CONF_DIR" 2>&1); then
+        res ok "Конфиг Xray" "проверка xray -test пройдена"
+    else
+        res fail "Конфиг Xray" "$(printf '%s\n' "$out" | grep -iE 'failed|error' | tail -n 1 | cut -c1-200)"
+    fi
+else
+    res fail "Xray" "ядро не установлено"
+fi
+
+dats=$(ls "$OPT_DIR/etc/xray/dat/" 2>/dev/null | grep -c '\.dat$')
+if [ "${dats:-0}" -gt 0 ]; then
+    res ok "Геобазы" "$dats файлов в /opt/etc/xray/dat"
+else
+    res fail "Геобазы" "нет файлов .dat — Xray не примет конфиг с правилами по базам; установите: xkeen -ug"
+fi
+
+# --- Политика роутера ------------------------------------------------------------------
+pol=$("$OPT_DIR/bin/xkeen-rci-setup" status 2>/dev/null)
+if [ "$(printf '%s' "$pol" | jq -r '.xkeen_policy_exists' 2>/dev/null)" = "true" ]; then
+    res ok "Политика XKeen" "$(printf '%s' "$pol" | jq -r '.policy_id')"
+else
+    res info "Политика XKeen" "нет — XKeen проксирует все устройства"
+fi
+
+# --- Подписка -----------------------------------------------------------------------------
+st="$HAPP_DIR/state.json"
+# jq в Entware без регулярных выражений — маску ссылки делаем через sed
+sub_url=$(jq -r '.sub_url // ""' "$HAPP_DIR/config.json" 2>/dev/null)
+if [ -n "$sub_url" ]; then
+    src="ссылка $(printf '%s' "$sub_url" | sed -E 's#^([a-zA-Z0-9]+://[^/?#]+).*#\1/***#')"
+elif [ -n "$(jq -r '.manual_links // ""' "$HAPP_DIR/config.json" 2>/dev/null)" ]; then
+    src="ключи вручную"
+else
+    src=""
+fi
+if [ -z "$src" ]; then
+    res warn "Подписка" "не указана — вставьте в панели"
+elif [ "$(jq -r '.last_status' "$st" 2>/dev/null)" = "ok" ]; then
+    res ok "Подписка" "$src; серверов $(jq -r '.server_count' "$st"), обновлена $(jq -r '.last_updated' "$st")"
+else
+    res fail "Подписка" "$src; ошибка: $(jq -r '.last_error' "$st" 2>/dev/null)"
+fi
+exp=$(jq -r '.expire_ts // 0' "$st" 2>/dev/null)
+if [ "${exp:-0}" -gt 0 ] 2>/dev/null; then
+    left=$(( (exp - $(date +%s)) / 86400 ))
+    if [ "$left" -lt 0 ]; then res fail "Срок подписки" "истёк"
+    elif [ "$left" -lt 5 ]; then res warn "Срок подписки" "осталось $left дн."
+    else res ok "Срок подписки" "осталось $left дн."; fi
+fi
+
+# --- Сеть ---------------------------------------------------------------------------------
+if curl -s -o /dev/null -m 6 https://www.gstatic.com/generate_204; then
+    res ok "Интернет с роутера" "HTTPS работает"
+else
+    res fail "Интернет с роутера" "нет доступа к https://www.gstatic.com"
+fi
+
+if [ -s "$st" ]; then
+    total=$(jq '.servers | length' "$st")
+    alive=0
+    for hp in $(jq -r '.servers[] | "\(.address)|\(.port)"' "$st" | head -n 10); do
+        h="${hp%|*}"; p="${hp#*|}"
+        case "$h" in *:*) h="[$h]" ;; esac
+        curl -g -s -o /dev/null --connect-timeout 3 -m 4 "http://$h:$p" 2>/dev/null
+        rc=$?
+        # 0, 52 (пустой ответ), 56 (сброс после соединения) — порт открыт
+        case "$rc" in 0|52|56|35|8) alive=$((alive + 1)) ;; esac
+    done
+    checked=$(( total < 10 ? total : 10 ))
+    if [ "$checked" -eq 0 ]; then :
+    elif [ "$alive" -gt 0 ]; then res ok "Серверы подписки" "TCP-порт открыт у $alive из $checked"
+    else res fail "Серверы подписки" "ни один из $checked не отвечает — блокировка у провайдера или серверы недоступны"; fi
+fi
+
+res info "Проверка с устройства" "откройте 2ip.ru с телефона в Wi-Fi: должен быть IP VPN-сервера"
+
+# --- Итог ---------------------------------------------------------------------------------
+if [ "$JSON" = "1" ]; then
+    printf '%s' "$RESULTS" | jq -sc --argjson f "$n_fail" --argjson w "$n_warn" '{fail: $f, warn: $w, checks: .}'
+else
+    echo
+    if [ "$n_fail" -eq 0 ]; then
+        printf '\033[32mИтог: ошибок нет\033[0m (предупреждений: %s)\n' "$n_warn"
+    else
+        printf '\033[31mИтог: ошибок %s\033[0m, предупреждений %s\n' "$n_fail" "$n_warn"
+    fi
+fi

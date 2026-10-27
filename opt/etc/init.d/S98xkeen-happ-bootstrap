@@ -1,0 +1,40 @@
+#!/bin/sh
+# ==============================================================================
+# S98xkeen-happ-bootstrap — доустановка XKeen Happ после установки Entware с
+# флешки. Запускается установщиком Entware сразу по его окончании, а также при
+# каждой загрузке роутера, пока установка не завершится успешно (до 5 попыток).
+# ==============================================================================
+
+export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+LOG="/opt/var/log/xkeen-happ-bootstrap.log"
+TRIES_FILE="/opt/etc/xkeen-happ/.bootstrap-tries"
+MAX_TRIES=5
+
+run_bootstrap() {
+    mkdir -p /opt/var/log /opt/etc/xkeen-happ
+    tries=$(cat "$TRIES_FILE" 2>/dev/null || echo 0)
+    tries=$((tries + 1))
+    echo "$tries" > "$TRIES_FILE"
+    {
+        echo "=== $(date '+%F %T') Автоустановка XKeen Happ, попытка $tries из $MAX_TRIES ==="
+        # Сеть после загрузки поднимается не сразу
+        sleep 20
+        if /opt/bin/xkeen-happ-setup; then
+            echo "=== $(date '+%F %T') Готово. Откройте http://<IP роутера>:8099 и задайте пароль панели ==="
+            rm -f "$TRIES_FILE" "$0"
+        elif [ "$tries" -ge "$MAX_TRIES" ]; then
+            echo "=== Автоустановка не удалась $MAX_TRIES раз подряд. Запустите вручную по SSH: /opt/bin/xkeen-happ-setup ==="
+            rm -f "$0"
+        else
+            echo "=== Не удалось, повторим при следующей загрузке роутера ==="
+        fi
+    } >> "$LOG" 2>&1
+}
+
+case "${1:-start}" in
+    start)
+        [ -f /opt/etc/xkeen-happ/.installed ] && { rm -f "$0"; exit 0; }
+        run_bootstrap </dev/null &
+        ;;
+esac

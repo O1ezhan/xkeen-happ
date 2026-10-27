@@ -1,0 +1,366 @@
+#!/bin/sh
+# ==============================================================================
+# xkeen-rci-setup — Автоматическая настройка роутера Keenetic / Netcraze (NDMS)
+# через локальный RCI API (127.0.0.1:79/rci) и ndmc CLI.
+#
+# Выполняет без участия пользователя:
+#   1. Создание политики подключения "XKeen" и привязку активных провайдеров (ISP)
+#   2. Перенос домашней сети (Bridge0) в политику "XKeen"
+#   3. Настройку защищённого DNS: DoT и DoH (Cloudflare 1.1.1.1 + Google 8.8.8.8)
+#   4. Прописывание скрипта автозапуска Entware (/opt/etc/init.d/rc.unslung)
+#   5. Сохранение конфигурации роутера (system configuration save)
+# ==============================================================================
+
+export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+RCI_URL="http://127.0.0.1:79/rci"
+DO_POLICY="${XKEEN_HAPP_POLICY:-1}"
+DO_DNS="${XKEEN_HAPP_DNS:-1}"
+XKEEN_CFG="/opt/etc/xkeen/xkeen.json"
+HAPP_CFG="/opt/etc/xkeen-happ/config.json"
+
+green="\033[92m"
+red="\033[91m"
+yellow="\033[93m"
+cyan="\033[96m"
+reset="\033[0m"
+
+log_info() { printf "  ${cyan}[RCI]${reset} %s\n" "$1"; }
+log_ok()   { printf "  ${green}[✔]${reset} %s\n" "$1"; }
+log_warn() { printf "  ${yellow}[!]${reset} %s\n" "$1"; }
+log_err()  { printf "  ${red}[✗]${reset} %s\n" "$1" >&2; }
+
+# Извлечение rci_token (для KeeneticOS 5.2+, если задан)
+get_rci_token() {
+    if [ -n "${RCI_TOKEN:-}" ]; then
+        printf '%s' "$RCI_TOKEN"
+        return 0
+    fi
+    if [ -f "$HAPP_CFG" ] && command -v jq >/dev/null 2>&1; then
+        t=$(jq -r '.rci_token // empty' "$HAPP_CFG" 2>/dev/null)
+        [ -n "$t" ] && [ "$t" != "null" ] && { printf '%s' "$t"; return 0; }
+    fi
+    if [ -f "$XKEEN_CFG" ]; then
+        t=$(sed -n 's/.*"rci_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$XKEEN_CFG" 2>/dev/null | head -n 1)
+        [ -n "$t" ] && [ "$t" != "null" ] && { printf '%s' "$t"; return 0; }
+    fi
+    return 1
+}
+
+RCI_TOKEN_VAL="$(get_rci_token || true)"
+
+rci_get() {
+    endpoint="$1"
+    if [ -n "$RCI_TOKEN_VAL" ]; then
+        curl --connect-timeout 2 -m 5 -fsS -H "X-Ndma-Tkn: $RCI_TOKEN_VAL" "${RCI_URL}/${endpoint}" 2>/dev/null
+    else
+        curl --connect-timeout 2 -m 5 -fsS "${RCI_URL}/${endpoint}" 2>/dev/null
+    fi
+}
+
+rci_post() {
+    endpoint="$1"
+    payload="$2"
+    if [ -n "$RCI_TOKEN_VAL" ]; then
+        curl --connect-timeout 3 -m 8 -fsS -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Ndma-Tkn: $RCI_TOKEN_VAL" \
+            -d "$payload" "${RCI_URL}/${endpoint}" 2>/dev/null
+    else
+        curl --connect-timeout 3 -m 8 -fsS -X POST \
+            -H "Content-Type: application/json" \
+            -d "$payload" "${RCI_URL}/${endpoint}" 2>/dev/null
+    fi
+}
+
+NDMC=""
+command -v ndmc >/dev/null 2>&1 && NDMC="ndmc"
+[ -z "$NDMC" ] && [ -x /bin/ndmc ] && NDMC="/bin/ndmc"
+
+# Команда CLI роутера: через ndmc, а если его нет — тем же JSON через RCI
+run_cmd() {
+    cmd="$1"
+    rci_json="$2"
+    if [ -n "$NDMC" ]; then
+        "$NDMC" -c "$cmd" >/dev/null 2>&1 && return 0
+        log_warn "ndmc: не выполнено «$cmd»"
+        return 1
+    fi
+    [ -n "$rci_json" ] && rci_post "" "$rci_json" >/dev/null && return 0
+    log_warn "RCI: не выполнено «$cmd»"
+    return 1
+}
+
+running_config() {
+    [ -n "$NDMC" ] && "$NDMC" -c "show running-config" 2>/dev/null
+}
+
+check_rci_available() {
+    http_code=$(curl --connect-timeout 2 -m 4 -sS -o /dev/null -w "%{http_code}" \
+        ${RCI_TOKEN_VAL:+-H "X-Ndma-Tkn: $RCI_TOKEN_VAL"} "${RCI_URL}/show/version" 2>/dev/null || echo "000")
+    case "$http_code" in
+        200) return 0 ;;
+        401|403)
+            log_warn "RCI вернул код $http_code (KeeneticOS 5.2+ требует rci_token). Пробуем ndmc CLI..."
+            [ -n "$NDMC" ] && return 0
+            log_err "Необходим токен RCI в $HAPP_CFG или $XKEEN_CFG"
+            return 1
+            ;;
+        *)
+            [ -n "$NDMC" ] && return 0
+            log_warn "Локальный RCI API (127.0.0.1:79) недоступен (код $http_code) — возможно, запуск вне роутера Keenetic/Netcraze."
+            return 1
+            ;;
+    esac
+}
+
+# Определение существующей политики XKeen или выбор свободной Policy0..Policy15
+find_or_pick_xkeen_policy() {
+    policies_json="$(rci_get "show/ip/policy")"
+    if [ -n "$policies_json" ] && command -v jq >/dev/null 2>&1; then
+        # Ищем политику с описанием XKeen (без учёта регистра)
+        existing=$(printf '%s' "$policies_json" | jq -r '
+            to_entries[]? |
+            select((.value.description // "" | ascii_downcase) == "xkeen") |
+            .key' 2>/dev/null | head -n 1)
+        if [ -n "$existing" ]; then
+            printf '%s' "$existing"
+            return 0
+        fi
+        # Иначе выбираем первый свободный Policy0..Policy15
+        i=0
+        while [ "$i" -le 15 ]; do
+            cand="Policy${i}"
+            in_use=$(printf '%s' "$policies_json" | jq -r --arg k "$cand" 'has($k)' 2>/dev/null)
+            if [ "$in_use" != "true" ]; then
+                printf '%s' "$cand"
+                return 0
+            fi
+            i=$((i + 1))
+        done
+    fi
+    printf 'Policy0'
+}
+
+# Определение активных глобальных WAN-интерфейсов (ISP, PPPoE0, UsbModem0 и т.д.)
+detect_wan_interfaces() {
+    if_json="$(rci_get "show/interface")"
+    if [ -n "$if_json" ] && command -v jq >/dev/null 2>&1; then
+        wans=$(printf '%s' "$if_json" | jq -r '
+            to_entries[]? |
+            select(.value.global == true or .value.defaultgw == true) |
+            select((.key | ascii_downcase) as $k | ["bridge", "openvpn", "wireguard", "opkgtun"] | any(. as $p | $k | startswith($p)) | not) |
+            .key // .value.id' 2>/dev/null | awk '!seen[$0]++')
+        if [ -n "$wans" ]; then
+            printf '%s\n' "$wans"
+            return 0
+        fi
+    fi
+    printf 'ISP\n'
+}
+
+setup_router_rci() {
+    log_info "Проверка связи с системой NDMS (Keenetic / Netcraze)..."
+    if ! check_rci_available; then
+        return 1
+    fi
+
+    ver_json="$(rci_get "show/version")"
+    if [ -n "$ver_json" ] && command -v jq >/dev/null 2>&1; then
+        model=$(printf '%s' "$ver_json" | jq -r '"\(.model // "Keenetic") (\(.title // .release // "NDMS"))"' 2>/dev/null)
+        log_ok "Обнаружен роутер: $model"
+    fi
+
+    if [ "$DO_POLICY" = "1" ]; then
+        # 1. Политика XKeen
+        POLICY_ID="$(find_or_pick_xkeen_policy)"
+        log_info "Настройка политики '$POLICY_ID' (описание: XKeen)..."
+        run_cmd "ip policy $POLICY_ID" "[{\"ip\":{\"policy\":{\"name\":\"$POLICY_ID\"}}}]"
+        run_cmd "ip policy $POLICY_ID description XKeen" "[{\"ip\":{\"policy\":{\"name\":\"$POLICY_ID\",\"description\":\"XKeen\"}}}]"
+
+        WAN_LIST="$(detect_wan_interfaces)"
+        for wan_if in $WAN_LIST; do
+            [ -n "$wan_if" ] || continue
+            log_info "Выход в интернет через '$wan_if' в политике '$POLICY_ID'..."
+            run_cmd "ip policy $POLICY_ID permit global $wan_if" \
+                "[{\"ip\":{\"policy\":{\"name\":\"$POLICY_ID\",\"permit\":[{\"interface\":\"$wan_if\",\"global\":true}]}}}]"
+        done
+        log_ok "Политика '$POLICY_ID' (XKeen) настроена"
+
+        # 2. Домашняя сеть в политику XKeen — только если у неё ещё нет своей политики
+        rc_text=$(running_config)
+        current=$(printf '%s\n' "$rc_text" | sed -n 's/^[[:space:]]*policy \(Bridge0\|Home\) \([A-Za-z0-9]*\).*/\2/p' | head -n 1)
+        if [ -z "$rc_text" ]; then
+            log_warn "Не удалось прочитать конфигурацию роутера (нет ndmc) — домашнюю сеть не трогаем. Назначьте ей политику XKeen вручную."
+        elif [ "$current" = "$POLICY_ID" ]; then
+            log_ok "Домашняя сеть уже в политике XKeen"
+        elif [ -n "$current" ] && [ "$current" != "$POLICY_ID" ] && [ "$current" != "permit" ]; then
+            log_warn "У домашней сети уже есть политика '$current' — не меняем. Добавьте нужные устройства в политику XKeen вручную."
+        else
+            log_info "Назначение политики '$POLICY_ID' домашней сети (Bridge0)..."
+            run_cmd "ip hotspot policy Bridge0 $POLICY_ID" \
+                "[{\"ip\":{\"hotspot\":{\"policy\":{\"interface\":\"Bridge0\",\"policy\":\"$POLICY_ID\"}}}}]" && \
+                log_ok "Домашняя сеть (Bridge0) переведена в политику XKeen"
+        fi
+    else
+        log_info "Политика XKeen: пропущено (--no-policy)"
+    fi
+
+    if [ "$DO_DNS" = "1" ]; then
+        # 3. Защищённый DNS — только если пользователь не настроил свой
+        rc_text=$(running_config)
+        if ! has_component dns-tls && ! has_component dns-https; then
+            log_info "Компоненты «DNS-over-TLS/HTTPS прокси» не установлены — DNS не меняем"
+        elif [ -z "$rc_text" ]; then
+            log_warn "Не удалось прочитать конфигурацию роутера — DNS не меняем"
+        elif printf '%s\n' "$rc_text" | grep -Eq '^[[:space:]]*(tls|https) upstream'; then
+            log_info "DNS-over-TLS/HTTPS уже настроен на роутере — не меняем"
+        else
+            log_info "Добавление DNS-over-TLS / DNS-over-HTTPS (Cloudflare, Google)..."
+            run_cmd "dns-proxy tls upstream 1.1.1.1 sni cloudflare-dns.com" '[{"dns-proxy":{"tls":{"upstream":{"address":"1.1.1.1","sni":"cloudflare-dns.com"}}}}]'
+            run_cmd "dns-proxy tls upstream 8.8.8.8 sni dns.google" '[{"dns-proxy":{"tls":{"upstream":{"address":"8.8.8.8","sni":"dns.google"}}}}]'
+            run_cmd "dns-proxy https upstream https://cloudflare-dns.com/dns-query" '[{"dns-proxy":{"https":{"upstream":{"url":"https://cloudflare-dns.com/dns-query"}}}}]'
+            run_cmd "dns-proxy https upstream https://dns.google/dns-query" '[{"dns-proxy":{"https":{"upstream":{"url":"https://dns.google/dns-query"}}}}]'
+            log_ok "Защищённый DNS добавлен (нужны компоненты прошивки «DNS-over-TLS/HTTPS прокси»)"
+        fi
+    else
+        log_info "DNS: пропущено (--no-dns)"
+    fi
+
+    # 4. Проверка сценария initrc для OPKG
+    log_info "Проверка сценария автозапуска Entware (/opt/etc/init.d/rc.unslung)..."
+    run_cmd "opkg initrc /opt/etc/init.d/rc.unslung" '[{"opkg":{"initrc":{"path":"/opt/etc/init.d/rc.unslung"}}}]' 
+
+    # 5. Сохранение конфигурации роутера
+    log_info "Сохранение настроек в энергонезависимую память роутера..."
+    run_cmd "system configuration save" '[{"system":{"configuration":{"save":true}}}]' && \
+        log_ok "Конфигурация роутера сохранена"
+    return 0
+}
+
+# --- Устройства: «через VPN» / «напрямую» / «как сеть» ---------------------------------
+policy_by_desc() {
+    rci_get "show/ip/policy" | jq -r --arg d "$1" 'to_entries[]? | select((.value.description // "" | ascii_downcase) == $d) | .key' 2>/dev/null | head -n 1
+}
+
+# Политика «напрямую»: выход через провайдера, без метки XKeen — трафик идёт мимо Xray
+ensure_direct_policy() {
+    id=$(policy_by_desc "xkeen-direct")
+    if [ -z "$id" ]; then
+        used=$(rci_get "show/ip/policy" | jq -r 'keys[]' 2>/dev/null)
+        i=0
+        while [ "$i" -le 15 ]; do
+            printf '%s\n' "$used" | grep -qx "Policy$i" || { id="Policy$i"; break; }
+            i=$((i + 1))
+        done
+        [ -n "$id" ] || return 1
+        run_cmd "ip policy $id" "" >/dev/null || return 1
+        run_cmd "ip policy $id description XKeen-Direct" "" >/dev/null
+        for wan_if in $(detect_wan_interfaces); do
+            run_cmd "ip policy $id permit global $wan_if" "" >/dev/null
+        done
+    fi
+    printf '%s' "$id"
+}
+
+list_devices() {
+    xk=$(policy_by_desc "xkeen"); dr=$(policy_by_desc "xkeen-direct")
+    conf=$(rci_get "ip/hotspot/host"); [ -n "$conf" ] || conf="[]"
+    seg=$(running_config | sed -n 's/^[[:space:]]*policy \(Bridge0\|Home\) \([A-Za-z0-9]*\).*/\2/p' | head -n 1)
+    rci_get "show/ip/hotspot" | jq -c --argjson conf "$conf" --arg xk "$xk" --arg dr "$dr" --arg seg "$seg" '
+        ($conf | if type == "array" then . else [] end | map({(.mac): .}) | add // {}) as $c
+        | [.host[]? | . as $h | ($c[$h.mac] // {}) as $cf
+           | {mac, ip: (.ip // ""), active: (.active // false),
+              name: ((.name // "" | split(" - ")[0]) as $n | if $n != "" then $n elif (.hostname // "") != "" then .hostname else .mac end),
+              mode: (($cf.policy // "") as $p
+                     | if $p == "" then (if $seg == $xk and $xk != "" then "vpn" else "direct" end)
+                       elif $p == $xk then "vpn" else "direct" end),
+              effective: (if (.policy // "") == $xk and $xk != "" then "vpn" elif (.policy // "") == "" then "default" elif (.policy // "") == $dr then "direct" else "other" end)}]
+        | sort_by((if .active then 0 else 1 end), (.name | ascii_downcase))'
+}
+
+set_device() {
+    mac=$(printf '%s' "$1" | tr 'A-F' 'a-f')
+    printf '%s' "$mac" | grep -Eq '^([0-9a-f]{2}:){5}[0-9a-f]{2}$' || { log_err "Неверный MAC: $1"; return 2; }
+    [ -n "$NDMC" ] || { log_err "Нет ndmc — управление устройствами недоступно"; return 1; }
+    case "$2" in
+        vpn)
+            id=$(policy_by_desc "xkeen")
+            [ -n "$id" ] || { log_err "Нет политики XKeen — запустите xkeen-rci-setup"; return 1; }
+            # Если домашняя сеть уже в политике XKeen — устройству достаточно «как сеть»
+            # (роутер и сам сворачивает одинаковую политику хоста в conform)
+            seg=$(running_config | sed -n 's/^[[:space:]]*policy \(Bridge0\|Home\) \([A-Za-z0-9]*\).*/\2/p' | head -n 1)
+            if [ "$seg" = "$id" ]; then
+                run_cmd "ip hotspot host $mac conform" ""
+            else
+                run_cmd "ip hotspot host $mac policy $id" ""
+            fi ;;
+        direct)
+            id=$(ensure_direct_policy) || { log_err "Не удалось создать политику XKeen-Direct"; return 1; }
+            run_cmd "ip hotspot host $mac policy $id" "" ;;
+        segment)
+            run_cmd "ip hotspot host $mac conform" "" ;;
+        *) log_err "Режим: vpn, direct или segment"; return 2 ;;
+    esac || return 1
+    run_cmd "system configuration save" "" >/dev/null
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        --no-dns) DO_DNS=0 ;;
+        --no-policy) DO_POLICY=0 ;;
+    esac
+done
+
+# Компоненты прошивки: без OPKG и модулей Netfilter XKeen работать не сможет
+check_components() {
+    comps=$(rci_get "show/version" | jq -r '.ndw.components // ""' 2>/dev/null | tr ',' ' ')
+    [ -n "$comps" ] || { echo "unknown"; return 0; }
+    missing=""
+    for c in opkg opkg-kmod-netfilter opkg-kmod-netfilter-addons; do
+        case " $comps " in *" $c "*) ;; *) missing="$missing $c" ;; esac
+    done
+    echo "${missing# }"
+}
+
+has_component() {
+    rci_get "show/version" | jq -r '.ndw.components // ""' 2>/dev/null | tr ',' '\n' | grep -qx "$1"
+}
+
+case "${1:-setup}" in
+    components)
+        check_components
+        ;;
+    devices)
+        list_devices
+        ;;
+    device-set)
+        set_device "$2" "$3"
+        ;;
+    status)
+        if check_rci_available >/dev/null 2>&1; then
+            ver_json="$(rci_get "show/version")"
+            pol_json="$(rci_get "show/ip/policy")"
+            has_xkeen="false"
+            pol_id=""
+            if [ -n "$pol_json" ] && command -v jq >/dev/null 2>&1; then
+                pol_id=$(printf '%s' "$pol_json" | jq -r '
+                    to_entries[]? |
+                    select((.value.description // "" | ascii_downcase) == "xkeen") |
+                    .key' 2>/dev/null | head -n 1)
+                [ -n "$pol_id" ] && has_xkeen="true"
+            fi
+            model=""
+            if [ -n "$ver_json" ] && command -v jq >/dev/null 2>&1; then
+                model=$(printf '%s' "$ver_json" | jq -r '"\(.model // "Keenetic") (\(.release // "NDMS"))"' 2>/dev/null)
+            fi
+            jq -nc --arg m "${model:-Keenetic}" --arg p "${pol_id:-}" --argjson x "$has_xkeen" \
+                '{rci_available: true, model: $m, xkeen_policy_exists: $x, policy_id: $p}'
+        else
+            printf '{"rci_available":false,"model":"Linux / Standalone","xkeen_policy_exists":false,"policy_id":""}\n'
+        fi
+        ;;
+    *)
+        setup_router_rci
+        ;;
+esac

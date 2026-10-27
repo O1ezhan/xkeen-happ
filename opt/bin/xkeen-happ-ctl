@@ -1,0 +1,347 @@
+#!/bin/sh
+# ==============================================================================
+# xkeen-happ-ctl — служебные команды панели XKeen Happ:
+#   health                       — проверить, что трафик реально идёт через VPN
+#   good-save | rollback         — запомнить рабочий конфиг Xray / вернуть его
+#   notify "текст"               — сообщение в Telegram (если настроено)
+#   notify-test | find-chat      — проверка бота / найти chat_id по последнему сообщению боту
+#   check-events                 — фоновые проверки для уведомлений (из cron, раз в 5 минут)
+#   versions                     — версии XKeen, Xray, панели и дата геобаз (JSON)
+#   killswitch [on|off]          — kill switch XKeen (нужен XKeen 2.1+)
+#   task <имя>                   — запустить долгую задачу в фоне: update-geo, update-xray,
+#                                  update-xkeen, update-panel
+#   task-status                  — состояние последней фоновой задачи (JSON)
+#   export | import              — настройки в JSON (stdout / stdin)
+# ==============================================================================
+
+export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export LC_ALL=C
+
+OPT_DIR="${XKEEN_OPT_DIR:-/opt}"
+HAPP_DIR="$OPT_DIR/etc/xkeen-happ"
+CONFIG_FILE="$HAPP_DIR/config.json"
+STATE_FILE="$HAPP_DIR/state.json"
+EVENTS_FILE="$HAPP_DIR/events.json"
+GOOD_DIR="$HAPP_DIR/good"
+XRAY_CONF_DIR="$OPT_DIR/etc/xray/configs"
+RUN_DIR="$OPT_DIR/var/run/xkeen-happ"
+TASK_FILE="$RUN_DIR/task.json"
+TASK_LOG="$OPT_DIR/var/log/xkeen-happ-task.log"
+HAPP_LOG="$OPT_DIR/var/log/xkeen-happ.log"
+XKEEN="$OPT_DIR/sbin/xkeen"
+CHECK_PORT=10811
+OUR_FILES="04_outbounds.json 05_routing.json 07_observatory.json 08_happ_check.json"
+XKEEN_URL="https://github.com/jameszeroX/XKeen/releases/latest/download/xkeen.tar.gz"
+PANEL_URL_DEFAULT="https://github.com/@REPO@/releases/latest/download/install.sh"
+
+mkdir -p "$HAPP_DIR" "$RUN_DIR" "$OPT_DIR/var/log"
+
+log_msg() {
+    printf '%s  %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$HAPP_LOG"
+}
+
+cfg() { jq -r --arg k "$1" '.[$k] // empty' "$CONFIG_FILE" 2>/dev/null; }
+
+# --- Проверка работы VPN ------------------------------------------------------------
+# Через служебный socks-вход Xray (127.0.0.1:10811), который маршрутизируется так же,
+# как трафик устройств в VPN. Ответ 204 от gstatic — VPN работает.
+health() {
+    [ -f "$XRAY_CONF_DIR/08_happ_check.json" ] || return 2
+    i=0
+    while [ "$i" -lt 15 ]; do
+        netstat -tln 2>/dev/null | grep -q "127.0.0.1:$CHECK_PORT " && break
+        sleep 1; i=$((i + 1))
+    done
+    for try in 1 2 3; do
+        code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' -x "socks5h://127.0.0.1:$CHECK_PORT" https://www.gstatic.com/generate_204 2>/dev/null)
+        [ "$code" = "204" ] && return 0
+        sleep 3
+    done
+    return 1
+}
+
+# XKeen 2.1 перезапускает Xray в фоне: ждём, пока он реально поднимется, иначе
+# следующий перезапуск подряд может оставить Xray остановленным
+xray_restart() {
+    old=$(pidof xray)
+    "$XKEEN" -restart </dev/null >/dev/null 2>&1 9>&-
+    i=0
+    while [ "$i" -lt 30 ]; do
+        new=$(pidof xray)
+        if [ -n "$new" ] && [ "$new" != "$old" ] && netstat -tln 2>/dev/null | grep -q "127.0.0.1:$CHECK_PORT \|:61219 "; then
+            return 0
+        fi
+        sleep 1; i=$((i + 1))
+    done
+    pidof xray >/dev/null 2>&1 && return 0
+    log_msg "Xray не поднялся после перезапуска — запускаю XKeen"
+    "$XKEEN" -start </dev/null >/dev/null 2>&1 9>&-
+    sleep 5
+    pidof xray >/dev/null 2>&1
+}
+
+good_save() {
+    mkdir -p "$GOOD_DIR"
+    rm -f "$GOOD_DIR"/*.json
+    for f in $OUR_FILES; do
+        [ -f "$XRAY_CONF_DIR/$f" ] && cp "$XRAY_CONF_DIR/$f" "$GOOD_DIR/"
+    done
+    date '+%Y-%m-%d %H:%M' > "$GOOD_DIR/.saved"
+}
+
+rollback() {
+    ls "$GOOD_DIR"/*.json >/dev/null 2>&1 || { echo "Нет сохранённого рабочего конфига" >&2; return 1; }
+    for f in $OUR_FILES; do rm -f "$XRAY_CONF_DIR/$f"; done
+    cp "$GOOD_DIR"/*.json "$XRAY_CONF_DIR/"
+    xray_restart
+    log_msg "Возвращён рабочий конфиг от $(cat "$GOOD_DIR/.saved" 2>/dev/null)"
+}
+
+# --- Telegram ---------------------------------------------------------------------------
+tg_send() {
+    token=$(cfg tg_token); chat=$(cfg tg_chat)
+    [ -n "$token" ] && [ -n "$chat" ] || return 2
+    url="https://api.telegram.org/bot$token/sendMessage"
+    # сначала напрямую, если Telegram у провайдера недоступен — через VPN
+    for proxy in "" "socks5h://127.0.0.1:$CHECK_PORT"; do
+        if curl -fsS -m 15 ${proxy:+-x "$proxy"} -o /dev/null "$url" \
+            --data-urlencode "chat_id=$chat" --data-urlencode "text=$1" 2>/dev/null; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+notify() {
+    [ "$(cfg notify)" = "false" ] && return 0
+    model=$(curl -s -m 3 http://127.0.0.1:79/rci/show/version | jq -r '.model // empty' 2>/dev/null)
+    tg_send "🛜 XKeen Happ${model:+ ($model)}
+$1"
+}
+
+find_chat() {
+    token=$(cfg tg_token)
+    [ -n "$token" ] || { echo "Сначала укажите токен бота" >&2; return 1; }
+    for proxy in "" "socks5h://127.0.0.1:$CHECK_PORT"; do
+        upd=$(curl -fsS -m 15 ${proxy:+-x "$proxy"} "https://api.telegram.org/bot$token/getUpdates" 2>/dev/null) && break
+    done
+    chat=$(printf '%s' "$upd" | jq -r '[.result[]? | (.message // .channel_post // empty) | .chat.id] | last // empty' 2>/dev/null)
+    [ -n "$chat" ] || { echo "Напишите боту любое сообщение в Telegram и нажмите ещё раз" >&2; return 1; }
+    printf '%s' "$chat"
+}
+
+# Одно и то же событие не шлём чаще раза в сутки; при восстановлении — сообщаем один раз
+event() {
+    key="$1"; active="$2"; text="$3"
+    [ -s "$EVENTS_FILE" ] || echo '{}' > "$EVENTS_FILE"
+    last=$(jq -r --arg k "$key" '.[$k] // 0' "$EVENTS_FILE")
+    now=$(date +%s)
+    if [ "$active" = "1" ]; then
+        if [ "$last" -eq 0 ] || [ $((now - last)) -ge 86400 ]; then
+            notify "$text" && jq --arg k "$key" --argjson t "$now" '.[$k] = $t' "$EVENTS_FILE" > "$EVENTS_FILE.$$" && mv "$EVENTS_FILE.$$" "$EVENTS_FILE"
+        fi
+    elif [ "$last" -ne 0 ]; then
+        [ -n "$4" ] && notify "$4"
+        jq --arg k "$key" 'del(.[$k])' "$EVENTS_FILE" > "$EVENTS_FILE.$$" && mv "$EVENTS_FILE.$$" "$EVENTS_FILE"
+    fi
+}
+
+# Самолечение: если трафик через VPN не идёт, а включён выбор по скорости — сразу
+# перемерить серверы (иначе до следующего замера XKeen ждать до 15 минут)
+self_heal() {
+    [ -f "$HAPP_DIR/.paused" ] && return 0
+    pidof xray >/dev/null 2>&1 || return 0
+    health && { echo 0 > "$RUN_DIR/health-fails"; return 0; }
+    if [ "$(speed_state)" = "on" ]; then
+        log_msg "VPN не пропускает трафик — внеочередной замер скорости серверов"
+        "$XKEEN" -sbt </dev/null >/dev/null 2>&1
+        health && { log_msg "После замера VPN снова работает"; echo 0 > "$RUN_DIR/health-fails"; return 0; }
+    fi
+    fails=$(cat "$RUN_DIR/health-fails" 2>/dev/null || echo 0)
+    echo $((fails + 1)) > "$RUN_DIR/health-fails"
+}
+
+check_events() {
+    self_heal
+    [ -n "$(cfg tg_token)" ] || return 0
+    [ -f "$HAPP_DIR/.paused" ] && return 0
+
+    # Xray не работает (сторож уже пытался поднять)
+    down=0
+    [ -x "$OPT_DIR/sbin/xray" ] && ! pidof xray >/dev/null 2>&1 && down=1
+    event xray_down "$down" "❌ Xray не работает, VPN выключен. Сторож пытается запустить его снова." "✅ Xray снова работает"
+
+    # VPN не пропускает трафик — 3 проверки подряд (15 минут), счётчик ведёт self_heal
+    fails=$(cat "$RUN_DIR/health-fails" 2>/dev/null || echo 0)
+    bad=0; [ "$fails" -ge 3 ] && bad=1
+    event vpn_fail "$bad" "⚠️ VPN не пропускает трафик уже 15 минут: серверы подписки недоступны или заблокированы. Откройте панель → «Диагностика»." "✅ VPN снова работает"
+
+    # Подписка не обновилась
+    st=$(jq -r '.last_status // ""' "$STATE_FILE" 2>/dev/null)
+    sub_err=0; [ "$st" = "error" ] && sub_err=1
+    event sub_error "$sub_err" "⚠️ Подписка не обновилась: $(jq -r '.last_error // ""' "$STATE_FILE" 2>/dev/null)" "✅ Подписка снова обновляется"
+
+    # Срок подписки
+    exp=$(jq -r '.expire_ts // 0' "$STATE_FILE" 2>/dev/null)
+    soon=0
+    if [ "${exp:-0}" -gt 0 ] 2>/dev/null; then
+        left=$(( (exp - $(date +%s)) / 86400 ))
+        [ "$left" -le 3 ] && soon=1
+    fi
+    event sub_expire "$soon" "⏳ Подписка заканчивается: осталось ${left:-0} дн. Продлите её, иначе VPN перестанет работать."
+}
+
+# --- Версии и обновления -----------------------------------------------------------------
+versions() {
+    xk=$("$XKEEN" -v 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | sed -n 's/.*XKeen \([0-9.]*\).*/\1/p' | head -n 1)
+    xr=$("$OPT_DIR/sbin/xray" version 2>/dev/null | awk 'NR == 1 {print $2}')
+    newest=$(ls -t "$OPT_DIR/etc/xray/dat/"*.dat 2>/dev/null | head -n 1)
+    geo=""; [ -n "$newest" ] && geo=$(date -r "$newest" '+%Y-%m-%d' 2>/dev/null)
+    ks="unsupported"
+    if grep -q -- '-killswitch)' "$XKEEN" 2>/dev/null; then
+        ks=$(sed 's#//.*##' "$OPT_DIR/etc/xkeen/xkeen.json" 2>/dev/null | jq -r '.xkeen.killswitch // "off"' 2>/dev/null)
+        [ -z "$ks" ] && ks="off"
+    fi
+    good=$(cat "$GOOD_DIR/.saved" 2>/dev/null)
+    sbs=$(speed_state)
+    res='{}'; [ "$sbs" = "on" ] && res=$(speed_results)
+    jq -nc --arg xk "$xk" --arg xr "$xr" --arg p "$(cat "$HAPP_DIR/VERSION" 2>/dev/null)" --arg g "$geo" --arg ks "$ks" --arg good "$good" --arg sb "$sbs" --argjson r "$res" \
+        '{xkeen: $xk, xray: $xr, panel: $p, geo: $g, killswitch: $ks, speed: $sb, speed_results: $r, good_saved: $good}'
+}
+
+# Балансировка XKeen по фактической скорости (xkeen -sb, XKeen 2.1+)
+speed_state() {
+    grep -q -- '-sb)' "$XKEEN" 2>/dev/null || { echo unsupported; return; }
+    v=$(sed 's#//.*##' "$OPT_DIR/etc/xkeen/xkeen.json" 2>/dev/null | jq -r '.xkeen.xray.speed_balancer.enabled // false' 2>/dev/null)
+    [ "$v" = "true" ] && echo on || echo off
+}
+
+# Последние замеры XKeen по каждому серверу (КБ/с, 0 — не работает) и текущий сервер
+speed_results() {
+    f="$OPT_DIR/var/log/xray/speed_balancer.log"
+    [ -f "$f" ] || { echo '{"node":"","speeds":{}}'; return; }
+    tail -n 200 "$f" | awk '
+        /замер proxy-[0-9]+:/ && !/код adrules/ {
+            tag = $4; sub(":", "", tag); kb = $5 + 0; sp[tag] = kb; at = $1 " " substr($2, 1, 5)
+        }
+        /быстрейшая нода уже активна:/ { node = $0; sub(/.*активна: /, "", node); sub(/ .*/, "", node) }
+        /переключение:/ { node = $0; sub(/.*-> /, "", node); sub(/ .*/, "", node) }
+        END {
+            printf "{\"node\":\"%s\",\"at\":\"%s\",\"speeds\":{", node, at
+            sep = ""
+            for (t in sp) { printf "%s\"%s\":%d", sep, t, sp[t]; sep = "," }
+            print "}}"
+        }'
+}
+
+speed_set() {
+    [ "$(speed_state)" = "unsupported" ] && { echo "Нужен XKeen 2.1 или новее — обновите XKeen" >&2; return 1; }
+    case "$1" in
+        on)
+            # балансировщик нужен в конфиге: включаем автовыбор сервера
+            echo '{"selection_mode":"auto"}' | "$OPT_DIR/bin/xkeen-sub" save-config >/dev/null 2>&1
+            "$OPT_DIR/bin/xkeen-sub" apply >/dev/null 2>&1
+            # «y» — согласие XKeen добавить gRPC api и probe-inbound
+            printf 'y\n' | "$XKEEN" -sb on ;;
+        off) "$XKEEN" -sb off </dev/null ;;
+        *) return 2 ;;
+    esac
+}
+
+update_xkeen() {
+    echo "Скачивание XKeen..."
+    tmp="$OPT_DIR/tmp/xkeen-update.tar.gz"
+    curl -fsSL --retry 3 -m 120 "$XKEEN_URL" -o "$tmp" || { echo "Не удалось скачать XKeen"; return 1; }
+    tar -tzf "$tmp" >/dev/null 2>&1 || { echo "Архив XKeen повреждён"; return 1; }
+    cp -a "$XKEEN" "$OPT_DIR/sbin/xkeen.happ-bak" 2>/dev/null
+    tar -xzf "$tmp" -C "$OPT_DIR/sbin/" && rm -f "$tmp"
+    chmod +x "$XKEEN"
+    # Штатное завершение обновления XKeen (регистрация, миграции) без вопросов
+    "$XKEEN" -uk_post_update auto </dev/null
+}
+
+update_panel() {
+    url=$(cfg update_url); [ -z "$url" ] && url="$PANEL_URL_DEFAULT"
+    tmp="$OPT_DIR/tmp/install-xkeen-sub.sh"
+    echo "Скачивание $url"
+    curl -fsSL -m 60 "$url" -o "$tmp" || { echo "Не удалось скачать обновление панели"; return 1; }
+    sh "$tmp" --skip-xkeen && rm -f "$tmp"
+}
+
+task_run() {
+    name="$1"
+    case "$name" in
+        update-geo)   cmd="$XKEEN -ug" ;;
+        update-xray)  cmd="$XKEEN -ux auto" ;;
+        update-xkeen) cmd="update_xkeen" ;;
+        update-panel) cmd="update_panel" ;;
+        speed-on)     cmd="speed_set on" ;;
+        speed-off)    cmd="speed_set off" ;;
+        *) echo "Неизвестная задача: $name" >&2; return 2 ;;
+    esac
+    if [ -f "$TASK_FILE" ] && [ "$(jq -r .state "$TASK_FILE")" = "running" ] && kill -0 "$(jq -r .pid "$TASK_FILE")" 2>/dev/null; then
+        echo "Уже выполняется задача: $(jq -r .name "$TASK_FILE")" >&2
+        return 1
+    fi
+    jq -nc --arg n "$name" --arg t "$(date '+%H:%M:%S')" '{name: $n, state: "running", pid: 0, started: $t}' > "$TASK_FILE"
+    : > "$TASK_LOG"
+    # Отвязываем от CGI: иначе веб-сервер ждал бы окончания обновления
+    (
+        if eval "$cmd" >> "$TASK_LOG" 2>&1; then st=ok; else st=fail; fi
+        jq -nc --arg n "$name" --arg s "$st" --arg t "$(date '+%H:%M:%S')" '{name: $n, state: $s, finished: $t}' > "$TASK_FILE"
+        log_msg "Задача $name: $st"
+    ) </dev/null >/dev/null 2>&1 9>&- &
+    pid=$!
+    jq -c --argjson p "$pid" 'if .state == "running" then .pid = $p else . end' "$TASK_FILE" > "$TASK_FILE.$$" && mv "$TASK_FILE.$$" "$TASK_FILE"
+    return 0
+}
+
+task_status() {
+    [ -f "$TASK_FILE" ] || { echo '{"state":"none"}'; return; }
+    tail_txt=$(tail -n 15 "$TASK_LOG" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+    jq -c --arg l "$tail_txt" '. + {log: $l}' "$TASK_FILE"
+}
+
+# --- Экспорт / импорт ------------------------------------------------------------------------
+export_settings() {
+    devs=$("$OPT_DIR/bin/xkeen-rci-setup" devices 2>/dev/null | jq -c '[.[] | select(.mode != "segment") | {mac, name, mode}]' 2>/dev/null)
+    jq -c --argjson d "${devs:-[]}" --arg v "$(cat "$HAPP_DIR/VERSION" 2>/dev/null)" --arg t "$(date '+%Y-%m-%d %H:%M')" \
+        '{xkeen_happ_export: 1, version: $v, exported: $t,
+          config: (del(.hwid, .ui_port, .rci_token)), devices: $d}' "$CONFIG_FILE"
+}
+
+import_settings() {
+    data=$(cat)
+    printf '%s' "$data" | jq -e '.xkeen_happ_export == 1 and (.config | type) == "object"' >/dev/null 2>&1 \
+        || { echo "Это не файл настроек XKeen Happ" >&2; return 2; }
+    printf '%s' "$data" | jq -c '.config' | "$OPT_DIR/bin/xkeen-sub" save-config
+    rc=$?
+    [ "$rc" -ge 2 ] && return 2
+    printf '%s' "$data" | jq -r '.devices[]? | "\(.mac) \(.mode)"' | while read -r mac mode; do
+        "$OPT_DIR/bin/xkeen-rci-setup" device-set "$mac" "$mode" >/dev/null 2>&1
+    done
+    return 0
+}
+
+case "${1:-}" in
+    health)       health; rc=$?; [ "$rc" = 0 ] && echo ok || echo fail; exit $rc ;;
+    good-save)    good_save ;;
+    rollback)     rollback ;;
+    notify)       notify "$2" ;;
+    notify-test)  tg_send "✅ XKeen Happ: уведомления работают" || { echo "Не удалось отправить: проверьте токен и chat_id" >&2; exit 1; } ;;
+    find-chat)    find_chat ;;
+    check-events) check_events ;;
+    versions)     versions ;;
+    speed-state)  speed_state ;;
+    restart)      xray_restart ;;
+    speed)        speed_set "$2" ;;
+    killswitch)
+        grep -q -- '-killswitch)' "$XKEEN" 2>/dev/null || { echo "Kill switch есть в XKeen 2.1 и новее — обновите XKeen" >&2; exit 1; }
+        case "${2:-}" in on|off) "$XKEEN" -killswitch "$2" </dev/null >/dev/null 2>&1 ;; *) echo "on или off" >&2; exit 2 ;; esac
+        ;;
+    task)         task_run "$2" ;;
+    task-status)  task_status ;;
+    export)       export_settings ;;
+    import)       import_settings ;;
+    *) sed -n '3,17p' "$0"; exit 1 ;;
+esac
