@@ -46,7 +46,8 @@ mimetype.assign = (
   ".json" => "application/json",
   ".png"  => "image/png",
   ".svg"  => "image/svg+xml",
-  ".woff2" => "font/woff2"
+  ".woff2" => "font/woff2",
+  ".jpg"  => "image/jpeg"
 )
 setenv.add-response-header = (
   "X-Frame-Options" => "DENY",

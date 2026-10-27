@@ -3,7 +3,7 @@
 Панель для роутеров **Keenetic** и **Netcraze**, которая превращает роутер в VPN-клиент для всего дома. Вставляете ссылку на подписку своего VPN-сервиса — роутер сам настраивает [XKeen](https://github.com/jameszeroX/XKeen) и Xray, выбирает самый быстрый сервер и следит, чтобы VPN работал. Приложения на телефонах, телевизорах и приставках не нужны.
 
 <p>
-<img src="docs/overview.png" alt="Обзор: VPN работает" width="66%">
+<img src="docs/overview-alps.png" alt="Обзор: VPN работает" width="66%">
 <img src="docs/servers-phone.png" alt="Серверы на телефоне" width="29%">
 </p>
 
@@ -74,7 +74,7 @@ curl -fsSL https://github.com/O1ezhan/xkeen-happ/releases/latest/download/instal
 <p>
 <img src="docs/devices-phone.png" alt="Устройства" width="31%">
 <img src="docs/rules-phone.png" alt="Правила" width="31%">
-<img src="docs/overview-dark.png" alt="Тёмная тема" width="34%">
+<img src="docs/overview.png" alt="Классическая тема" width="34%">
 </p>
 
 ## Что меняется в роутере
@@ -129,6 +129,6 @@ sh scripts/build-release.sh   # dist/: install.sh, архивы для флеш�
 
 ## Благодарности и лицензия
 
-[XKeen](https://github.com/jameszeroX/XKeen) — jameszeroX, [Xray-core](https://github.com/XTLS/Xray-core) — XTLS, [Entware](https://entware.net/), шрифт [Onest](https://github.com/simpletype-ru/Onest) (SIL OFL). Проект не связан с Happ, Keenetic и Netcraze; названия принадлежат их владельцам.
+[XKeen](https://github.com/jameszeroX/XKeen) — jameszeroX, [Xray-core](https://github.com/XTLS/Xray-core) — XTLS, [Entware](https://entware.net/), шрифт [Onest](https://github.com/simpletype-ru/Onest) (SIL OFL), фото гор — [MonikaP, Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Snowy_mountain_range.jpg) (CC0). Проект не связан с Happ, Keenetic и Netcraze; названия принадлежат их владельцам.
 
 Лицензия MIT, см. [LICENSE](LICENSE).
