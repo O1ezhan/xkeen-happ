@@ -17,6 +17,9 @@ HAPP_DIR="$OPT_DIR/etc/xkeen-happ"
 CONFIG_FILE="$HAPP_DIR/config.json"
 XKEEN_URL="https://github.com/jameszeroX/XKeen/releases/latest/download/xkeen.tar.gz"
 PACKAGES="curl jq ca-bundle lighttpd lighttpd-mod-cgi lighttpd-mod-setenv"
+# Стартовый пакет с флешки: пакеты Entware, XKeen, Xray и геобазы уже внутри
+# (там, где репозиторий Entware или GitHub без VPN недоступны)
+OFFLINE_DIR="$OPT_DIR/var/xkeen-happ-offline"
 
 SUB_INPUT=""
 ROUTING_MODE=""
@@ -50,7 +53,8 @@ fi
 # --- 1. Сеть ----------------------------------------------------------------
 step 1/6 "Проверка доступа в интернет..."
 i=0
-until curl -s -o /dev/null -m 8 http://bin.entware.net/ || curl -s -o /dev/null -m 8 http://github.com/; do
+until curl -s -o /dev/null -m 8 http://bin.entware.net/ || curl -s -o /dev/null -m 8 http://github.com/ \
+    || curl -s -o /dev/null -m 8 https://ya.ru/; do
     i=$((i + 1))
     [ "$i" -ge 18 ] && die "нет доступа в интернет (ждали 3 минуты)"
     sleep 10
@@ -91,6 +95,29 @@ if [ "$SKIP_XKEEN" = "1" ]; then
     step 4/6 "Установка XKeen пропущена (--skip-xkeen)"
 elif [ -x "$OPT_DIR/sbin/xkeen" ] && [ -x "$OPT_DIR/sbin/xray" ]; then
     step 4/6 "XKeen и Xray уже установлены"
+elif [ -f "$OFFLINE_DIR/xkeen.tar.gz" ]; then
+    step 4/6 "Установка XKeen из стартового пакета ($(cat "$OFFLINE_DIR/VERSIONS" 2>/dev/null | tr '\n' ' '))..."
+    tar -xzf "$OFFLINE_DIR/xkeen.tar.gz" -C "$OPT_DIR/sbin/" || die "архив XKeen повреждён"
+    chmod +x "$OPT_DIR/sbin/xkeen"
+    # Ядро: на роутерах без FPU XKeen берёт сборку softfloat — та же проверка, что у него
+    xray_bin="$OFFLINE_DIR/xray/xray"
+    if [ -f "$OFFLINE_DIR/xray/xray_softfloat" ]; then
+        case "$(curl -s -m 5 http://127.0.0.1:79/rci/show/version)" in
+            *KN-1212*|*KN-2310*|*KN-2311*|*KN-2910*) xray_bin="$OFFLINE_DIR/xray/xray_softfloat" ;;
+        esac
+    fi
+    cp "$xray_bin" "$OPT_DIR/sbin/xray" && chmod 755 "$OPT_DIR/sbin/xray" || die "не удалось установить Xray"
+    # Геобазы и списки GeoIPSET под теми именами, что дал бы XKeen; обновлять их будет его cron
+    mkdir -p "$OPT_DIR/etc/xray/dat" "$OPT_DIR/etc/xkeen/ipset"
+    cp "$OFFLINE_DIR"/geo/*.dat "$OPT_DIR/etc/xray/dat/"
+    ln -sf "$OPT_DIR/etc/xray/dat/geosite_zkeen.dat" "$OPT_DIR/etc/xray/dat/zkeen.dat"
+    ln -sf "$OPT_DIR/etc/xray/dat/geoip_zkeenip.dat" "$OPT_DIR/etc/xray/dat/zkeenip.dat"
+    cp "$OFFLINE_DIR/ipset/ru_exclude_ipv4.lst" "$OFFLINE_DIR/ipset/ru_exclude_ipv6.lst" "$OPT_DIR/etc/xkeen/ipset/"
+    # cores=none, geo=off, geoipset=off: XKeen ничего не качает и берёт уже разложенное.
+    # _gh_probed: проверку GitHub пропускаем — он для этой установки не нужен.
+    _gh_probed=1 "$OPT_DIR/sbin/xkeen" -i auto cores=none geo=off geoipset=off cron=on autostart=on </dev/null \
+        || die "XKeen не установился — подробности выше"
+    [ -x "$OPT_DIR/sbin/xray" ] || die "после установки XKeen нет ядра Xray"
 else
     step 4/6 "Установка XKeen (Xray, геобазы zkeen/v2fly, GeoIPSET, автозапуск)..."
     tmp="/opt/tmp/xkeen.tar.gz"
@@ -158,6 +185,12 @@ step 6/6 "Запуск веб-панели..."
 "$OPT_DIR/etc/init.d/S99xkeen-happ" restart || die "панель не запустилась"
 
 date '+%F %T' > "$HAPP_DIR/.installed"
+
+# Стартовый пакет больше не нужен: возвращаем сетевые репозитории Entware и освобождаем место
+if [ -d "$OFFLINE_DIR" ]; then
+    [ -f "$OFFLINE_DIR/opkg.conf.online" ] && cp "$OFFLINE_DIR/opkg.conf.online" "$OPT_DIR/etc/opkg.conf"
+    rm -rf "$OFFLINE_DIR"
+fi
 
 ROUTER_IP="$(ip -4 addr show br0 2>/dev/null | awk '/inet / {split($2, a, "/"); print a[1]; exit}')"
 printf '\n\033[1;32mГотово.\033[0m Панель: \033[1;36mhttp://%s:8099\033[0m — при первом входе задайте пароль.\n' "${ROUTER_IP:-192.168.1.1}"
