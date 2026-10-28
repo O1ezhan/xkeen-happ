@@ -166,7 +166,16 @@ rc=$?
 
 has_source=$(jq -r 'if (.sub_url // "") != "" or (.manual_links // "") != "" then "1" else "" end' "$CONFIG_FILE")
 if [ -n "$has_source" ]; then
-    if "$OPT_DIR/bin/xkeen-sub" update; then
+    # Сразу после сохранения настроек роутера (DNS, политика) сеть может пропасть на несколько
+    # секунд — даём подписке три попытки
+    n=0
+    until "$OPT_DIR/bin/xkeen-sub" update; do
+        n=$((n + 1))
+        [ "$n" -ge 3 ] && break
+        echo "  Подписка не скачалась, повтор через 10 с..."
+        sleep 10
+    done
+    if [ "$n" -lt 3 ]; then
         echo "  Подписка загружена: $(jq -r '.profile_title' "$HAPP_DIR/state.json") ($(jq -r '.server_count' "$HAPP_DIR/state.json") серв.)"
         # По умолчанию — выбор сервера по реальной скорости (XKeen 2.1+), если серверов несколько
         if [ -z "$SELECTION_MODE" ] && [ "$(jq -r '.server_count' "$HAPP_DIR/state.json")" -ge 2 ] 2>/dev/null \
