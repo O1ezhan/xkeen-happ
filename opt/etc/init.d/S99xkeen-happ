@@ -69,11 +69,12 @@ start_service() {
 
     # Первая загрузка с флешки: Entware уже стартует службы, а автонастройка ещё ставит
     # lighttpd. Панель запустит сама автонастройка — это не ошибка.
-    if ! command -v lighttpd >/dev/null 2>&1 && [ ! -f "$OPT_DIR/etc/xkeen-happ/.installed" ]; then
+    # (в прошивке бывает свой lighttpd без mod_cgi, поэтому смотрим именно в /opt)
+    if [ ! -x "$OPT_DIR/sbin/lighttpd" ] && [ ! -f "$OPT_DIR/etc/xkeen-happ/.installed" ]; then
         echo "XKeen Happ UI: идёт установка, панель запустится по её окончании"
         return 0
     fi
-    command -v lighttpd >/dev/null 2>&1 || {
+    [ -x "$OPT_DIR/sbin/lighttpd" ] || {
         echo "Ошибка: нет веб-сервера. Установите: opkg install lighttpd lighttpd-mod-cgi lighttpd-mod-setenv" >&2
         return 1
     }
@@ -85,7 +86,7 @@ start_service() {
     done
     [ -n "$bind" ] || { echo "Ошибка: нет адреса у br0 (домашняя сеть), панель не запущена" >&2; return 1; }
     write_lighttpd_conf "$bind"
-    lighttpd -f "$LCONF" || { echo "Ошибка запуска lighttpd, см. $LOG" >&2; return 1; }
+    "$OPT_DIR/sbin/lighttpd" -f "$LCONF" || { echo "Ошибка запуска lighttpd, см. $LOG" >&2; return 1; }
 
     "$OPT_DIR/bin/xkeen-sub" cron >/dev/null 2>&1
 
