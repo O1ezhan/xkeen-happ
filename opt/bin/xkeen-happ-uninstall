@@ -26,7 +26,7 @@ rm -f "$OPT_DIR/etc/init.d/S99xkeen-happ" \
       "$OPT_DIR/bin/xkeen-happ-setup" \
       "$OPT_DIR/bin/xkeen-happ-doctor" \
       "$OPT_DIR/bin/xkeen-happ-ctl"
-rm -rf "$OPT_DIR/share/xkeen-happ" "$OPT_DIR/var/run/xkeen-happ" "$OPT_DIR/etc/xkeen-happ"
+rm -rf "$OPT_DIR/share/xkeen-happ" "$OPT_DIR/var/run/xkeen-happ" "$OPT_DIR/var/lib/xkeen-happ" "$OPT_DIR/etc/xkeen-happ"
 rm -f "$OPT_DIR/etc/xray/configs/07_observatory.json" "$OPT_DIR/etc/xray/configs/08_happ_check.json"
 
 if [ "${1:-}" = "--all" ] && [ -x "$OPT_DIR/sbin/xkeen" ]; then

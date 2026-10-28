@@ -961,20 +961,25 @@ INNER_OBS
       )
     }' > "$stage/05_routing.json"
 
-    # Служебный вход для проверки VPN (xkeen-happ-ctl health): только 127.0.0.1
-    cat > "$stage/08_happ_check.json" <<'INNER_CHECK'
-{
-  "inbounds": [
-    {
-      "tag": "happ-check",
-      "listen": "127.0.0.1",
-      "port": 10811,
-      "protocol": "socks",
-      "settings": { "udp": false }
-    }
-  ]
-}
-INNER_CHECK
+    # Служебный вход для проверки VPN (xkeen-happ-ctl health): только 127.0.0.1.
+    # Плюс счётчики трафика по серверам для аналитики (stats + policy.system). Объект policy
+    # из 06_policy.json XKeen копируем целиком: при слиянии файлов Xray более поздний
+    # объект верхнего уровня заменяет прежний.
+    xk_policy=$(sed 's#^[[:space:]]*//.*##' "$XRAY_CONF_DIR/06_policy.json" 2>/dev/null | jq -c '.policy // {}' 2>/dev/null)
+    [ -n "$xk_policy" ] || xk_policy='{}'
+    jq -n --argjson p "$xk_policy" '{
+      stats: {},
+      policy: ($p | .system = ((.system // {}) + { statsOutboundUplink: true, statsOutboundDownlink: true })),
+      inbounds: [
+        {
+          tag: "happ-check",
+          listen: "127.0.0.1",
+          port: 10811,
+          protocol: "socks",
+          settings: { udp: false }
+        }
+      ]
+    }' > "$stage/08_happ_check.json"
 
     # Новый конфиг сначала проверяет сам Xray: при ошибке остаётся прежний рабочий
     xray_bin="$OPT_DIR/sbin/xray"

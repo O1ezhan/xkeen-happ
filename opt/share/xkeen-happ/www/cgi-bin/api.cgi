@@ -314,6 +314,14 @@ case "$action" in
         send "200 OK" "$("$CTL" versions | jq -c '. + {ok: true}')"
         ;;
 
+    analytics)
+        days=$(printf '%s' "${QUERY_STRING:-}" | sed -n 's/^\(.*&\)\{0,1\}days=\([0-9]*\).*/\2/p')
+        case "$days" in 1|7|30) ;; *) days=1 ;; esac
+        out=$("$CTL" analytics "$days" 2>/dev/null)
+        printf '%s' "$out" | jq -e 'type == "object"' >/dev/null 2>&1 || fail "503 Service Unavailable" "Не удалось прочитать данные аналитики"
+        send "200 OK" "$(printf '%s' "$out" | jq -c '. + {ok: true}')"
+        ;;
+
     killswitch)
         st=$(field state)
         err=$("$CTL" killswitch "$st" 2>&1) && send "200 OK" "$(jq -nc --arg s "$st" '{ok: true, message: ("Kill switch: " + (if $s == "on" then "включён" else "выключен" end))}')"

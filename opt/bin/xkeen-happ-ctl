@@ -12,6 +12,7 @@
 #                                  update-xkeen, update-panel
 #   task-status                  — состояние последней фоновой задачи (JSON)
 #   export | import              — настройки в JSON (stdout / stdin)
+#   analytics [1|7|30]           — данные для графиков за N дней (JSON)
 # ==============================================================================
 
 export PATH="/opt/sbin:/opt/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -33,6 +34,8 @@ CHECK_PORT=10811
 OUR_FILES="04_outbounds.json 05_routing.json 07_observatory.json 08_happ_check.json"
 XKEEN_URL="https://github.com/jameszeroX/XKeen/releases/latest/download/xkeen.tar.gz"
 PANEL_URL_DEFAULT="https://github.com/@REPO@/releases/latest/download/install.sh"
+STATS_DIR="$OPT_DIR/var/lib/xkeen-happ/stats"
+STATS_DAYS=30
 
 mkdir -p "$HAPP_DIR" "$RUN_DIR" "$OPT_DIR/var/log"
 
@@ -53,8 +56,12 @@ health() {
         sleep 1; i=$((i + 1))
     done
     for try in 1 2 3; do
-        code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' -x "socks5h://127.0.0.1:$CHECK_PORT" https://www.gstatic.com/generate_204 2>/dev/null)
-        [ "$code" = "204" ] && return 0
+        res=$(curl -s -o /dev/null -m 10 -w '%{http_code} %{time_total}' -x "socks5h://127.0.0.1:$CHECK_PORT" https://www.gstatic.com/generate_204 2>/dev/null)
+        if [ "${res%% *}" = "204" ]; then
+            # время ответа в мс — для графика доступности
+            echo "${res#* }" | awk '{ printf "%d\n", $1 * 1000 }' > "$RUN_DIR/health-ms"
+            return 0
+        fi
         sleep 3
     done
     return 1
@@ -95,6 +102,7 @@ rollback() {
     cp "$GOOD_DIR"/*.json "$XRAY_CONF_DIR/"
     xray_restart
     log_msg "Возвращён рабочий конфиг от $(cat "$GOOD_DIR/.saved" 2>/dev/null)"
+    stat_event rollback "Возвращён рабочий конфиг от $(cat "$GOOD_DIR/.saved" 2>/dev/null)"
 }
 
 # --- Telegram ---------------------------------------------------------------------------
@@ -148,14 +156,18 @@ event() {
 
 # Самолечение: если трафик через VPN не идёт, а включён выбор по скорости — сразу
 # перемерить серверы (иначе до следующего замера XKeen ждать до 15 минут)
+# Итог проверки пишется в $RUN_DIR/health-last для аналитики: 1 — работает, 0 — нет, 2 — VPN выключен
 self_heal() {
+    echo 2 > "$RUN_DIR/health-last"
     [ -f "$HAPP_DIR/.paused" ] && return 0
+    echo 0 > "$RUN_DIR/health-last"
     pidof xray >/dev/null 2>&1 || return 0
-    health && { echo 0 > "$RUN_DIR/health-fails"; return 0; }
+    health && { echo 0 > "$RUN_DIR/health-fails"; echo 1 > "$RUN_DIR/health-last"; return 0; }
     if [ "$(speed_state)" = "on" ]; then
         log_msg "VPN не пропускает трафик — внеочередной замер скорости серверов"
+        stat_event heal "VPN не пропускал трафик — внеочередной замер серверов"
         "$XKEEN" -sbt </dev/null >/dev/null 2>&1
-        health && { log_msg "После замера VPN снова работает"; echo 0 > "$RUN_DIR/health-fails"; return 0; }
+        health && { log_msg "После замера VPN снова работает"; echo 0 > "$RUN_DIR/health-fails"; echo 1 > "$RUN_DIR/health-last"; return 0; }
     fi
     fails=$(cat "$RUN_DIR/health-fails" 2>/dev/null || echo 0)
     echo $((fails + 1)) > "$RUN_DIR/health-fails"
@@ -163,6 +175,7 @@ self_heal() {
 
 check_events() {
     self_heal
+    stats_collect
     [ -n "$(cfg tg_token)" ] || return 0
     [ -f "$HAPP_DIR/.paused" ] && return 0
 
@@ -189,6 +202,148 @@ check_events() {
         [ "$left" -le 3 ] && soon=1
     fi
     event sub_expire "$soon" "⏳ Подписка заканчивается: осталось ${left:-0} дн. Продлите её, иначе VPN перестанет работать."
+}
+
+# --- Аналитика ----------------------------------------------------------------------------
+# Раз в 5 минут (check-events) в $STATS_DIR дописываются строки TSV, время — unix:
+#   speed.tsv    время  сервер  КБ/с (0 — не работает)    замеры балансировщика XKeen
+#   health.tsv   время  1|0|2   мс  сервер                 проверка VPN (2 — VPN выключен)
+#   traffic.tsv  час    сервер  отправлено  получено       байты по счётчикам Xray за час
+#   events.tsv   время  вид     текст                      переключения, откаты, самолечение
+# Хранится $STATS_DAYS дней, около 1 МБ. Имена серверов — без табуляций, кавычек и \.
+
+stat_event() {
+    mkdir -p "$STATS_DIR"
+    printf '%s\t%s\t%s\n' "$(date +%s)" "$1" "$(printf '%s' "$2" | tr -d '\t\n\r"\\')" >> "$STATS_DIR/events.tsv"
+}
+
+# «тег<TAB>имя» для серверов подписки (jq без регулярных выражений — вырезаем символы кодами)
+server_names() {
+    jq -r '.servers[]? | "\(.tag)\t\(.name | explode | map(select(. >= 32 and . != 34 and . != 92)) | implode)"' "$STATE_FILE" 2>/dev/null
+}
+
+current_node() {
+    if [ "$(speed_state)" = "on" ]; then
+        speed_results | jq -r '.node // empty' 2>/dev/null
+    else
+        jq -r 'if (.selection_mode // "auto") == "manual" then .selected_tag // empty else empty end' "$CONFIG_FILE" 2>/dev/null
+    fi
+}
+
+stats_collect() {
+    mkdir -p "$STATS_DIR"
+    now=$(date +%s)
+    names="$RUN_DIR/server-names"
+    server_names > "$names"
+
+    # 1. Новые замеры скорости и переключения из журнала XKeen (он хранит лишь 200 строк)
+    sb_log="$OPT_DIR/var/log/xray/speed_balancer.log"
+    if [ -f "$sb_log" ]; then
+        last=$(cat "$STATS_DIR/.speed-last" 2>/dev/null || echo 0)
+        awk -F'\t' -v last="$last" -v sp="$STATS_DIR/speed.tsv" -v ev="$STATS_DIR/events.tsv" -v stamp="$STATS_DIR/.speed-last" '
+            function nm(t) { return (t in name) ? name[t] : t }
+            FNR == NR { name[$1] = $2; next }
+            {
+                split($0, w, " ")
+                d = w[1]; tm = w[2]; gsub("-", " ", d); gsub(":", " ", tm)
+                ts = mktime(d " " tm)
+                if (ts <= last) next
+                max = ts
+            }
+            /замер proxy-[0-9]+:/ && !/adrules/ {
+                tag = w[4]; sub(":", "", tag)
+                printf "%d\t%s\t%d\n", ts, nm(tag), w[5] + 0 >> sp
+            }
+            /переключение:/ {
+                line = $0; sub(/.*переключение: /, "", line)
+                split(line, p, " ")
+                printf "%d\tswitch\t%s → %s\n", ts, nm(p[1]), nm(p[4]) >> ev
+            }
+            END { if (max) print max > stamp }
+        ' "$names" "$sb_log"
+    fi
+
+    # 2. Проверка VPN (её только что сделал self_heal)
+    st=$(cat "$RUN_DIR/health-last" 2>/dev/null || echo 2)
+    ms=0; [ "$st" = "1" ] && ms=$(cat "$RUN_DIR/health-ms" 2>/dev/null || echo 0)
+    node=$(current_node)
+    nname=$(awk -F'\t' -v t="$node" '$1 == t { print $2; exit }' "$names")
+    printf '%s\t%s\t%s\t%s\n' "$now" "$st" "${ms:-0}" "${nname:-$node}" >> "$STATS_DIR/health.tsv"
+
+    # 3. Трафик: счётчики Xray (сбрасываются при перезапуске) → прирост, копим по часам
+    if pidof xray >/dev/null 2>&1 && "$OPT_DIR/sbin/xray" api statsquery --server=127.0.0.1:10085 -pattern 'outbound>>>' > "$RUN_DIR/stats.json" 2>/dev/null; then
+        hour=$((now / 3600 * 3600))
+        jq -r '.stat[]? | (.name | split(">>>")) as $n | "\($n[1])\t\($n[3])\t\(.value // 0)"' "$RUN_DIR/stats.json" 2>/dev/null \
+            | awk -F'\t' -v prev="$RUN_DIR/traffic-prev" -v acc="$RUN_DIR/traffic-hour" -v out="$STATS_DIR/traffic.tsv" -v hour="$hour" -v names="$names" '
+            function nm(t) { return (t in name) ? name[t] : t }
+            BEGIN {
+                while ((getline l < names) > 0) { split(l, a, "\t"); name[a[1]] = a[2] }
+                while ((getline l < prev) > 0) { split(l, a, "\t"); old[a[1] "\t" a[2]] = a[3] }
+                accHour = 0
+                while ((getline l < acc) > 0) {
+                    split(l, a, "\t")
+                    if (a[1] == "hour") accHour = a[2]; else { up[a[1]] = a[2]; down[a[1]] = a[3]; seen[a[1]] = 1 }
+                }
+                close(names); close(prev); close(acc)
+                # Час закончился — выгружаем накопленное
+                if (accHour && accHour != hour) {
+                    for (t in seen) if (up[t] + down[t] > 0) printf "%d\t%s\t%.0f\t%.0f\n", accHour, nm(t), up[t], down[t] >> out
+                    split("", up); split("", down); split("", seen)
+                }
+            }
+            $1 == "api" || $1 == "" { next }
+            {
+                k = $1 "\t" $2; v = $3 + 0
+                d = (k in old && v >= old[k]) ? v - old[k] : v
+                cur[k] = v
+                if ($2 == "uplink") up[$1] += d; else down[$1] += d
+                seen[$1] = 1
+            }
+            END {
+                printf "" > prev
+                for (k in cur) printf "%s\t%.0f\n", k, cur[k] > prev
+                printf "hour\t%d\n", hour > acc
+                for (t in seen) printf "%s\t%.0f\t%.0f\n", t, up[t], down[t] > acc
+            }'
+    fi
+
+    # 4. Раз в сутки — убрать данные старше $STATS_DAYS дней
+    if [ -z "$(find "$STATS_DIR/.pruned" -mmin -1440 2>/dev/null)" ]; then
+        cut=$((now - STATS_DAYS * 86400))
+        for f in speed health traffic events; do
+            [ -f "$STATS_DIR/$f.tsv" ] || continue
+            awk -F'\t' -v c="$cut" '$1 >= c' "$STATS_DIR/$f.tsv" > "$STATS_DIR/$f.tsv.$$" && mv "$STATS_DIR/$f.tsv.$$" "$STATS_DIR/$f.tsv"
+        done
+        touch "$STATS_DIR/.pruned"
+    fi
+}
+
+# JSON для раздела «Аналитика» за 1, 7 или 30 дней. Скорость и проверки VPN усредняются по
+# интервалам (15 мин / 1 ч / 4 ч), чтобы в браузер уходило немного данных.
+analytics() {
+    days="${1:-1}"
+    case "$days" in 1) step=900 ;; 7) step=3600 ;; 30) step=14400 ;; *) echo "1, 7 или 30" >&2; return 2 ;; esac
+    now=$(date +%s)
+    from=$((now - days * 86400))
+    {
+        printf '{"now":%s,"days":%s,"step":%s,"tz_offset":%s,' "$now" "$days" "$step" "$(date +%z | awk '{ s = substr($1, 1, 1) == "-" ? -1 : 1; print s * (substr($1, 2, 2) * 60 + substr($1, 4, 2)) }')"
+        printf '"speed":['
+        [ -f "$STATS_DIR/speed.tsv" ] && awk -F'\t' -v f="$from" -v s="$step" '
+            $1 >= f { b = int($1 / s) * s; k = b "\t" $2; n[k]++; sum[k] += $3; if ($3 == 0) z[k]++ }
+            END { sep = ""; for (k in n) { split(k, a, "\t"); printf "%s[%d,\"%s\",%d,%d,%d]", sep, a[1], a[2], sum[k] / n[k], n[k], z[k] + 0; sep = "," } }' "$STATS_DIR/speed.tsv"
+        printf '],"health":['
+        [ -f "$STATS_DIR/health.tsv" ] && awk -F'\t' -v f="$from" -v s="$step" '
+            $1 >= f { b = int($1 / s) * s; n[b]++; if ($2 == 1) { ok[b]++; ms[b] += $3 } else if ($2 == 2) off[b]++; node[b] = $4 }
+            END { sep = ""; for (b in n) { printf "%s[%d,%d,%d,%d,%d,\"%s\"]", sep, b, n[b], ok[b] + 0, off[b] + 0, ok[b] ? ms[b] / ok[b] : 0, node[b]; sep = "," } }' "$STATS_DIR/health.tsv"
+        printf '],"traffic":['
+        [ -f "$STATS_DIR/traffic.tsv" ] && awk -F'\t' -v f="$from" '
+            $1 >= f { printf "%s[%d,\"%s\",%.0f,%.0f]", sep, $1, $2, $3, $4; sep = "," }' "$STATS_DIR/traffic.tsv"
+        printf '],"events":['
+        # последние 300 событий
+        [ -f "$STATS_DIR/events.tsv" ] && awk -F'\t' -v f="$from" '$1 >= f' "$STATS_DIR/events.tsv" | tail -n 300 \
+            | awk -F'\t' '{ printf "%s[%d,\"%s\",\"%s\"]", sep, $1, $2, $3; sep = "," }'
+        printf ']}\n'
+    }
 }
 
 # --- Версии и обновления -----------------------------------------------------------------
@@ -343,5 +498,7 @@ case "${1:-}" in
     task-status)  task_status ;;
     export)       export_settings ;;
     import)       import_settings ;;
+    analytics)    analytics "${2:-1}" ;;
+    stats-collect) stats_collect ;;
     *) sed -n '3,17p' "$0"; exit 1 ;;
 esac

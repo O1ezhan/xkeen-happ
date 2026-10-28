@@ -252,6 +252,37 @@ pre.log {
 }
 .panel > pre.log:last-child { border-radius: 0 0 var(--r-panel) var(--r-panel); border-top: 1px solid var(--line); }
 
+/* Аналитика */
+.seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 12px; background: var(--sunken); border: 1px solid var(--line); }
+.seg button { border: 0; background: none; padding: 7px 14px; border-radius: 9px; font-weight: 550; font-size: 14px; color: var(--muted); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.chart { position: relative; padding: 14px 10px 8px 4px; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart text { fill: var(--faint); font-size: 11px; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .guide { stroke: var(--faint); stroke-dasharray: 3 3; }
+.tip { position: absolute; top: 8px; z-index: 2; min-width: 170px; max-width: 260px; padding: 8px 10px; border-radius: 10px; pointer-events: none;
+  background: var(--ink); color: var(--paper); font-size: 12.5px; line-height: 1.45; }
+.tip b { display: block; font-weight: 600; margin-bottom: 2px; }
+.tip i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 16px 16px; }
+.legend button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: none; border-radius: 20px; padding: 3px 10px; font-size: 13px; cursor: pointer; }
+.legend button[aria-pressed="false"] { opacity: .45; }
+.legend i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.strip-note { display: flex; flex-wrap: wrap; gap: 6px 16px; padding: 0 18px 14px; color: var(--muted); font-size: 13px; }
+.strip-note i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.rank-bar { height: 6px; border-radius: 6px; background: var(--sunken); overflow: hidden; margin-top: 8px; max-width: 320px; }
+.rank-bar i { display: block; height: 100%; border-radius: 6px; background: var(--cable); }
+.rank-num { text-align: right; flex: none; }
+.rank-num b { display: block; font-weight: 600; }
+.rank-num small { color: var(--muted); font-size: 12.5px; }
+.ev-time { color: var(--muted); font-size: 13px; flex: none; width: 92px; }
+.empty { padding: 22px 18px; color: var(--muted); font-size: 14px; }
+@media (max-width: 560px) {
+  .section-head { flex-wrap: wrap; row-gap: 4px; }
+  .section-head h2 { white-space: nowrap; }
+}
+
 /* Нижняя панель сохранения */
 .savebar { position: sticky; bottom: 16px; margin-top: 20px; display: flex; justify-content: flex-end; gap: 10px; align-items: center; padding: 12px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); }
 .savebar .hint { margin-right: auto; }
@@ -360,6 +391,7 @@ html.alps .seg button[aria-pressed="true"] { background: #fff; }
   <symbol id="i-devices" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="13" height="10" rx="1.5"/><path d="M6 19h5"/><rect x="17" y="8" width="5" height="11" rx="1.2"/></symbol>
   <symbol id="i-rules" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h11M4 12h7M4 18h11"/><path d="m16 15 3 3-3 3M19 6l-3 3"/></symbol>
   <symbol id="i-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v16h16"/><path d="m7 15 4-5 3 3 5-6"/></symbol>
   <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></symbol>
   <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></symbol>
 </svg>
@@ -372,6 +404,7 @@ html.alps .seg button[aria-pressed="true"] { background: #fff; }
     </div>
     <button class="nav-item" data-page="overview" aria-current="page"><svg><use href="#i-overview"/></svg>Обзор</button>
     <button class="nav-item" data-page="servers"><svg><use href="#i-server"/></svg>Серверы</button>
+    <button class="nav-item" data-page="analytics"><svg><use href="#i-chart"/></svg>Аналитика</button>
     <button class="nav-item" data-page="devices"><svg><use href="#i-devices"/></svg>Устройства</button>
     <button class="nav-item" data-page="rules"><svg><use href="#i-rules"/></svg>Правила</button>
     <button class="nav-item" data-page="settings"><svg><use href="#i-settings"/></svg>Настройки</button>
@@ -443,6 +476,47 @@ html.alps .seg button[aria-pressed="true"] { background: #fff; }
       </div>
       <div class="section">
         <div class="panel rows" id="serverList"><div class="row"><span class="hint">Загрузка…</span></div></div>
+      </div>
+    </section>
+
+    <!-- ============ Аналитика ============ -->
+    <section data-page="analytics" hidden>
+      <div class="page-head">
+        <div><h1>Аналитика</h1><p id="anSub">Как работали VPN и серверы.</p></div>
+        <div class="seg" role="group" aria-label="Период">
+          <button data-days="1" aria-pressed="true">Сутки</button><button data-days="7" aria-pressed="false">Неделя</button><button data-days="30" aria-pressed="false">Месяц</button>
+        </div>
+      </div>
+
+      <div class="panel facts" id="anFacts"></div>
+
+      <div class="section">
+        <div class="section-head"><h2>Доступность VPN</h2><span class="hint" id="anUpHint"></span></div>
+        <div class="panel"><div class="chart" id="anUptime"></div>
+          <div class="strip-note"><span><i style="background:var(--ok)"></i>работал</span><span><i style="background:var(--warn)"></i>были сбои</span><span><i style="background:var(--bad)"></i>не работал</span><span><i style="background:var(--faint)"></i>выключен</span><span><i style="background:var(--sunken);border:1px solid var(--line)"></i>нет данных</span></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>Скорость серверов</h2><span class="hint">Мбит/с, по замерам роутера</span></div>
+        <div class="panel"><div class="chart" id="anSpeed"></div><div class="legend" id="anLegend"></div></div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>Рейтинг серверов</h2><span class="hint">средняя скорость и доля удачных замеров</span></div>
+        <div class="panel rows" id="anRank"></div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>Трафик</h2><span class="hint" id="anTrafHint"></span></div>
+        <div class="panel"><div class="chart" id="anTraffic"></div>
+          <div class="strip-note"><span><i style="background:var(--cable)"></i>через VPN</span><span><i style="background:var(--faint)"></i>напрямую</span></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-head"><h2>События</h2></div>
+        <div class="panel rows" id="anEvents"></div>
       </div>
     </section>
 
@@ -632,6 +706,7 @@ function go(page) {
   document.querySelectorAll('.nav-item').forEach(b => b.setAttribute('aria-current', b.dataset.page === page ? 'page' : 'false'));
   if (page === 'devices' && S) loadDevices();
   if (page === 'settings' && S) pollTask();
+  if (page === 'analytics') loadAnalytics();
   try { localStorage.setItem('xh-page', page); } catch (e) {}
   window.scrollTo(0, 0);
 }
@@ -1028,6 +1103,227 @@ function setTheme(t) {
 document.querySelectorAll('[data-theme]').forEach(b => b.addEventListener('click', () => setTheme(b.dataset.theme)));
 setTheme(document.documentElement.classList.contains('alps') ? 'alps' : 'classic');
 
+/* ---------- аналитика ---------- */
+// Данные копит сам роутер (xkeen-happ-ctl stats-collect, раз в 5 минут), графики рисуются здесь
+let A = null, anDays = 1;
+const anHidden = new Set();
+const SERIES = ['#0b7a75', '#d9480f', '#5f3dc4', '#2f9e44', '#c2255c', '#1971c2', '#e67700', '#868e96'];
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+// Время роутера: метки показываем в его часовом поясе, а не в поясе браузера
+const rd = ts => new Date((ts + (A ? A.tz_offset : 0) * 60) * 1000);
+const two = n => String(n).padStart(2, '0');
+const hm = ts => { const d = rd(ts); return two(d.getUTCHours()) + ':' + two(d.getUTCMinutes()); };
+const dm = ts => { const d = rd(ts); return two(d.getUTCDate()) + '.' + two(d.getUTCMonth() + 1); };
+const when = ts => anDays === 1 ? hm(ts) : dm(ts) + ' ' + hm(ts);
+const mbit = kb => kb * 8 / 1000;
+const fmtMbit = v => v >= 100 ? Math.round(v) : v.toLocaleString('ru-RU', { maximumFractionDigits: 1 });
+const fmtBytes = b => b >= 1e9 ? (b / 1e9).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) + ' ГБ' : b >= 1e6 ? Math.round(b / 1e6) + ' МБ' : Math.round(b / 1e3) + ' КБ';
+const svgEl = (w, h, body) => `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img">${body}</svg>`;
+
+document.querySelectorAll('.seg [data-days]').forEach(b => b.addEventListener('click', () => {
+  anDays = +b.dataset.days;
+  document.querySelectorAll('.seg [data-days]').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+  loadAnalytics();
+}));
+
+async function loadAnalytics() {
+  try {
+    const d = await api('analytics&days=' + anDays);
+    if (!d.ok) { toast(d.message || 'Нет данных'); return; }
+    A = d; renderAnalytics();
+  } catch (e) { quiet(e); }
+}
+
+// Подписи оси времени: 5–7 штук по «круглым» часам или дням
+function timeTicks(from, to, w, x) {
+  const span = to - from, out = [];
+  const step = span <= 86400 ? 4 * 3600 : span <= 7 * 86400 ? 86400 : 5 * 86400;
+  const off = A.tz_offset * 60;
+  for (let t = Math.ceil((from + off) / step) * step - off; t <= to; t += step) {
+    const px = x(t); if (px < 24 || px > w - 24) continue;
+    out.push(`<line class="grid" x1="${px}" x2="${px}" y1="0" y2="100%" opacity=".5"/><text x="${px}" y="100%" dy="-2" text-anchor="middle">${span <= 86400 ? hm(t) : dm(t)}</text>`);
+  }
+  return out.join('');
+}
+
+function renderAnalytics() {
+  const from = A.now - A.days * 86400, to = A.now, step = A.step;
+  $('anSub').textContent = { 1: 'За последние сутки.', 7: 'За последние 7 дней.', 30: 'За последние 30 дней.' }[A.days] + ' Роутер собирает данные сам каждые 5 минут.';
+
+  // --- доступность ---
+  const hb = new Map(A.health.map(h => [h[0], h]));
+  let n = 0, ok = 0, msSum = 0, msN = 0;
+  A.health.forEach(([, cnt, good, off, ms]) => { n += cnt - off; ok += good; if (ms) { msSum += ms * good; msN += good; } });
+  const up = n ? ok / n * 100 : null;
+
+  // --- скорость по серверам ---
+  const bySrv = new Map();
+  A.speed.forEach(([b, name, kb, cnt, zeros]) => {
+    if (!bySrv.has(name)) bySrv.set(name, { name, pts: [], sum: 0, n: 0, zeros: 0 });
+    const s = bySrv.get(name);
+    s.pts.push([b, mbit(kb)]); s.sum += kb * cnt; s.n += cnt; s.zeros += zeros;
+  });
+  const servers = [...bySrv.values()].map(s => ({ ...s, avg: mbit(s.sum / s.n), okShare: (s.n - s.zeros) / s.n, pts: s.pts.sort((a, b) => a[0] - b[0]) }))
+    .sort((a, b) => b.avg - a.avg);
+  servers.forEach((s, i) => { s.color = SERIES[i % SERIES.length]; });
+
+  // --- трафик ---
+  const tStep = A.days === 1 ? 3600 : 86400, off = A.tz_offset * 60;
+  const tb = new Map();
+  let vpnTotal = 0, directTotal = 0;
+  const perSrv = new Map();
+  A.traffic.forEach(([h, name, upB, downB]) => {
+    const k = Math.floor((h + off) / tStep) * tStep - off, sum = upB + downB;
+    if (!tb.has(k)) tb.set(k, { vpn: 0, direct: 0 });
+    if (name === 'direct') { tb.get(k).direct += sum; directTotal += sum; }
+    else if (name !== 'block') { tb.get(k).vpn += sum; vpnTotal += sum; perSrv.set(name, (perSrv.get(name) || 0) + sum); }
+  });
+
+  const switches = A.events.filter(e => e[1] === 'switch').length;
+  const best = servers.find(s => s.okShare > 0.5);
+  $('anFacts').innerHTML = [
+    ['VPN работал', up == null ? '—' : (up >= 99.95 ? '100' : up.toLocaleString('ru-RU', { maximumFractionDigits: 1 })) + '%'],
+    ['Ответ через VPN', msN ? Math.round(msSum / msN) + ' мс' : '—'],
+    ['Лучший сервер', best ? `${flagOf(best.name)} ${fmtMbit(best.avg)} Мбит/с` : '—'],
+    ['Через VPN', A.traffic.length ? fmtBytes(vpnTotal) : '—'],
+  ].map(([k, v]) => `<div><span>${k}</span><b>${esc(v)}</b></div>`).join('');
+
+  renderUptime(from, to, step, hb);
+  $('anUpHint').textContent = switches ? `переключений сервера: ${switches}` : '';
+  renderSpeed(from, to, servers);
+  renderRank(servers, perSrv);
+  renderTraffic(from, to, tStep, tb, vpnTotal, directTotal);
+  renderEvents();
+}
+
+// Интервалы проверок: ключ — начало интервала (так их группирует роутер)
+function renderUptime(from, to, step, hb) {
+  const box = $('anUptime'), w = Math.max(280, box.clientWidth - 14), h = 64, bh = 38;
+  if (!A.health.length) { box.innerHTML = '<div class="empty">Данные появятся через 5–10 минут: роутер проверяет VPN каждые 5 минут.</div>'; return; }
+  const start = Math.floor(from / step) * step, count = Math.ceil((to - start) / step);
+  const bw = w * step / (to - from), cOk = css('--ok'), cWarn = css('--warn'), cBad = css('--bad'), cOff = css('--faint'), cNone = css('--sunken');
+  const x = t => (t - from) / (to - from) * w;
+  let rects = '';
+  for (let i = 0; i < count; i++) {
+    const b = start + i * step, e = hb.get(b);
+    let c = cNone;
+    if (e) { const [, cnt, good, off] = e, act = cnt - off; c = act <= 0 ? cOff : good === act ? cOk : good >= act / 2 ? cWarn : cBad; }
+    const px = Math.max(0, x(b));
+    rects += `<rect x="${(px).toFixed(1)}" y="2" width="${Math.max(1, bw - (bw > 4 ? 1.5 : 0)).toFixed(1)}" height="${bh}" rx="${bw > 6 ? 2 : 0}" fill="${c}" data-b="${b}"/>`;
+  }
+  box.innerHTML = svgEl(w, h, rects + timeTicks(from, to, w, x).replace(/<line[^>]*\/>/g, ''));
+  box.onpointermove = ev => {
+    const r = box.querySelector('svg').getBoundingClientRect(), t = from + (ev.clientX - r.left) / r.width * (to - from);
+    const b = Math.floor(t / step) * step, e = hb.get(b);
+    showTip(box, ev, e ? `<b>${when(b)}–${hm(b + step)}</b>${e[1] - e[3] <= 0 ? 'VPN выключен' : `проверок: ${e[1] - e[3]}, удачных: ${e[2]}`}${e[4] ? `<br>ответ ${e[4]} мс` : ''}${e[5] ? `<br>${esc(e[5])}` : ''}` : `<b>${when(b)}</b>нет данных`);
+  };
+  box.onpointerleave = () => hideTip(box);
+}
+
+function renderSpeed(from, to, servers) {
+  const box = $('anSpeed'), w = Math.max(280, box.clientWidth - 14), h = 230, top = 8, bottom = 22, left = 34;
+  if (!servers.length) {
+    box.innerHTML = `<div class="empty">${V && V.speed !== 'on' ? 'Скорость серверов роутер меряет в режиме «Самый быстрый» — включите его в разделе «Серверы».' : 'Первые замеры появятся в течение 15 минут.'}</div>`;
+    $('anLegend').innerHTML = ''; return;
+  }
+  const shown = servers.filter(s => !anHidden.has(s.name));
+  const max = Math.max(10, ...shown.flatMap(s => s.pts.map(p => p[1])));
+  // верх шкалы делится на 4 без дробей
+  const nice = [20, 40, 60, 80, 100, 120, 160, 200, 240, 300, 400, 500, 600, 800, 1000].find(v => v >= max) || Math.ceil(max / 400) * 400;
+  const x = t => left + (t - from) / (to - from) * (w - left), y = v => top + (1 - v / nice) * (h - top - bottom);
+  let g = '';
+  for (let i = 0; i <= 4; i++) { const v = nice * i / 4; g += `<line class="grid" x1="${left}" x2="${w}" y1="${y(v)}" y2="${y(v)}"/><text x="${left - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`; }
+  const gap = A.step * 2.5;
+  const lines = shown.slice().reverse().map(s => {
+    let d = '', prev = null;
+    s.pts.forEach(([t, v]) => { d += (prev == null || t - prev > gap ? 'M' : 'L') + x(t).toFixed(1) + ' ' + y(v).toFixed(1); prev = t; });
+    const dots = s.pts.length < 3 ? s.pts.map(([t, v]) => `<circle cx="${x(t)}" cy="${y(v)}" r="3" fill="${s.color}"/>`).join('') : '';
+    return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${dots}`;
+  }).join('');
+  box.innerHTML = svgEl(w, h, `<g>${g}</g><g transform="translate(0,0)">${timeTicks(from, to, w, x).replace(/y2="100%"/g, `y2="${h - bottom}"`)}</g>${lines}<line class="guide" id="anGuide" x1="0" x2="0" y1="${top}" y2="${h - bottom}" visibility="hidden"/>`);
+  box.onpointermove = ev => {
+    const r = box.querySelector('svg').getBoundingClientRect(), px = (ev.clientX - r.left) / r.width * w;
+    if (px < left) return hideTip(box);
+    const t = from + (px - left) / (w - left) * (to - from);
+    const rows = shown.map(s => {
+      let bestP = null; s.pts.forEach(p => { if (!bestP || Math.abs(p[0] - t) < Math.abs(bestP[0] - t)) bestP = p; });
+      return bestP && Math.abs(bestP[0] - t) <= A.step ? { s, p: bestP } : null;
+    }).filter(Boolean).sort((a, b) => b.p[1] - a.p[1]);
+    if (!rows.length) return hideTip(box);
+    const gl = $('anGuide'); gl.setAttribute('x1', x(rows[0].p[0])); gl.setAttribute('x2', x(rows[0].p[0])); gl.setAttribute('visibility', 'visible');
+    showTip(box, ev, `<b>${when(rows[0].p[0])}</b>` + rows.slice(0, 8).map(({ s, p }) => `<i style="background:${s.color}"></i>${esc(nameOf(s.name))}: ${p[1] > 0 ? fmtMbit(p[1]) : 'не работал'}`).join('<br>'));
+  };
+  box.onpointerleave = () => { hideTip(box); const gl = $('anGuide'); if (gl) gl.setAttribute('visibility', 'hidden'); };
+  $('anLegend').innerHTML = servers.map(s => `<button aria-pressed="${!anHidden.has(s.name)}" data-name="${esc(s.name)}"><i style="background:${s.color}"></i>${esc(flagOf(s.name))} ${esc(nameOf(s.name))}</button>`).join('');
+}
+$('anLegend').addEventListener('click', e => {
+  const b = e.target.closest('[data-name]'); if (!b || !A) return;
+  const n = b.dataset.name; anHidden.has(n) ? anHidden.delete(n) : anHidden.add(n);
+  renderAnalytics();
+});
+
+function renderRank(servers, perSrv) {
+  if (!servers.length) { $('anRank').innerHTML = '<div class="empty">Рейтинг появится после первых замеров скорости.</div>'; return; }
+  const top = Math.max(...servers.map(s => s.avg), 1);
+  $('anRank').innerHTML = servers.map(s => {
+    const share = Math.round(s.okShare * 100), traf = perSrv.get(s.name);
+    const note = share < 50 ? ', чаще не работает, чем работает' : '';
+    return `<div class="row"><span class="flag">${esc(flagOf(s.name))}</span>
+      <div class="row-main"><div class="row-title">${esc(nameOf(s.name))}</div>
+        <div class="row-sub">удачных замеров ${share}%${traf ? ', трафик ' + fmtBytes(traf) : ''}${note}</div>
+        <div class="rank-bar"><i style="width:${(s.avg / top * 100).toFixed(1)}%;${share < 50 ? 'background:var(--bad)' : ''}"></i></div></div>
+      <div class="rank-num"><b class="ms ${share < 50 ? 'dead' : s.avg < 15 ? 'mid' : 'good'}">${s.avg > 0 ? fmtMbit(s.avg) : '0'}</b><small>Мбит/с</small></div></div>`;
+  }).join('');
+}
+
+function renderTraffic(from, to, tStep, tb, vpnTotal, directTotal) {
+  const box = $('anTraffic'), w = Math.max(280, box.clientWidth - 14), h = 180, top = 8, bottom = 22, left = 44;
+  $('anTrafHint').textContent = A.traffic.length ? `через VPN ${fmtBytes(vpnTotal)}, напрямую ${fmtBytes(directTotal)}` : '';
+  if (!A.traffic.length) {
+    box.innerHTML = `<div class="empty">${V && V.speed !== 'on' ? 'Счётчики трафика работают вместе с режимом «Самый быстрый» (раздел «Серверы»).' : 'Первые цифры появятся через час: трафик считается по часам.'}</div>`; return;
+  }
+  const off = A.tz_offset * 60, first = Math.floor((from + off) / tStep) * tStep - off;
+  const keys = []; for (let k = first; k <= to; k += tStep) keys.push(k);
+  const max = Math.max(1, ...keys.map(k => { const v = tb.get(k); return v ? v.vpn + v.direct : 0; }));
+  const x = t => left + (t - from) / (to - from) * (w - left), y = v => top + (1 - v / max) * (h - top - bottom);
+  const bw = (w - left) / keys.length * 0.7, cV = css('--cable'), cD = css('--faint');
+  let g = ''; for (let i = 0; i <= 2; i++) { const v = max * i / 2; g += `<line class="grid" x1="${left}" x2="${w}" y1="${y(v)}" y2="${y(v)}"/><text x="${left - 6}" y="${y(v) + 4}" text-anchor="end">${i ? fmtBytes(v).replace(/ (ГБ|МБ|КБ)/, '$1') : 0}</text>`; }
+  const bars = keys.map(k => {
+    const v = tb.get(k); if (!v) return '';
+    const cx = Math.max(left, x(k + tStep / 2) - bw / 2);
+    return `<rect x="${cx.toFixed(1)}" y="${y(v.vpn).toFixed(1)}" width="${bw.toFixed(1)}" height="${(h - bottom - y(v.vpn)).toFixed(1)}" fill="${cV}" rx="2"/>` +
+      `<rect x="${cx.toFixed(1)}" y="${y(v.vpn + v.direct).toFixed(1)}" width="${bw.toFixed(1)}" height="${(y(v.vpn) - y(v.vpn + v.direct)).toFixed(1)}" fill="${cD}" opacity=".6" rx="2"/>`;
+  }).join('');
+  box.innerHTML = svgEl(w, h, g + timeTicks(from, to, w, x).replace(/<line[^>]*\/>/g, '') + bars);
+  box.onpointermove = ev => {
+    const r = box.querySelector('svg').getBoundingClientRect(), px = (ev.clientX - r.left) / r.width * w;
+    const t = from + (px - left) / (w - left) * (to - from), k = Math.floor((t + off) / tStep) * tStep - off, v = tb.get(k);
+    if (!v) return hideTip(box);
+    showTip(box, ev, `<b>${tStep === 3600 ? hm(k) + '–' + hm(k + 3600) : dm(k)}</b>через VPN ${fmtBytes(v.vpn)}<br>напрямую ${fmtBytes(v.direct)}`);
+  };
+  box.onpointerleave = () => hideTip(box);
+}
+
+const EV = { switch: 'Переключение сервера', rollback: 'Возврат рабочего конфига', heal: 'Самолечение' };
+function renderEvents() {
+  const list = A.events.slice(-40).reverse();
+  $('anEvents').innerHTML = list.length ? list.map(([t, kind, text]) =>
+    `<div class="row"><span class="ev-time">${dm(t)} ${hm(t)}</span><div class="row-main"><div class="row-title">${esc(EV[kind] || kind)}</div><div class="row-sub">${esc(text)}</div></div></div>`).join('')
+    : '<div class="empty">За этот период ничего не случилось: сервер не менялся, откатов не было.</div>';
+}
+
+function showTip(box, ev, html) {
+  let t = box.querySelector('.tip');
+  if (!t) { t = document.createElement('div'); t.className = 'tip'; box.appendChild(t); }
+  t.innerHTML = html;
+  const r = box.getBoundingClientRect(), px = ev.clientX - r.left;
+  t.style.left = (px > r.width / 2 ? Math.max(4, px - t.offsetWidth - 14) : px + 14) + 'px';
+}
+function hideTip(box) { const t = box.querySelector('.tip'); if (t) t.remove(); }
+
+let anResize;
+window.addEventListener('resize', () => { clearTimeout(anResize); anResize = setTimeout(() => { if (A && !document.querySelector('[data-page="analytics"]').hidden) renderAnalytics(); }, 150); });
+
 /* ---------- старт ---------- */
 async function loadAll() {
   await loadVersions();
@@ -1038,7 +1334,7 @@ async function loadAll() {
 }
 let start = 'overview';
 try { start = localStorage.getItem('xh-page') || 'overview'; } catch (e) {}
-go(['overview', 'servers', 'devices', 'rules', 'settings'].includes(start) ? start : 'overview');
+go(['overview', 'servers', 'analytics', 'devices', 'rules', 'settings'].includes(start) ? start : 'overview');
 checkAuth().then(ok => { if (ok) loadAll(); }).catch(() => toast('Нет связи с роутером'));
 </script>
 </body>
