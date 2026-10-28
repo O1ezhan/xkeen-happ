@@ -158,7 +158,6 @@ for f in deploy-unix.sh deploy-windows.bat; do
     sed "s#@REPO@#$REPO#g" "$ROOT/$f" > "$pkg/$f"
     cp "$pkg/$f" "$DIST/$f"
 done
-cp -R "$DIST/usb" "$pkg/usb"
 (cd "$WORK" && python3 -c 'import shutil, sys; shutil.make_archive(sys.argv[1], "zip", ".", sys.argv[2])' \
     "$DIST/xkeen-happ-$VERSION" "xkeen-happ-$VERSION")
 # отдельные архивы флешки — чтобы их можно было скачать по прямой ссылке из релиза

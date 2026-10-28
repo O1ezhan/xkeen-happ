@@ -25,6 +25,8 @@ curl -fsSL https://github.com/O1ezhan/xkeen-happ/releases/latest/download/instal
 
 ### Если Entware нет — флешкой
 
+Архив для флешки — это «стартовый пакет»: в нём уже есть Entware, XKeen, Xray и базы сайтов, поэтому роутеру не нужен доступ к репозиторию Entware и GitHub (без VPN они открываются не у всех). Интернет нужен только чтобы скачать подписку.
+
 1. Узнайте процессор роутера по таблице ниже и скачайте из [релиза](https://github.com/O1ezhan/xkeen-happ/releases/latest) файл `aarch64-installer.tar.gz`, `mipsel-installer.tar.gz` или `mips-installer.tar.gz`.
 2. Отформатируйте флешку в **EXT4** (на компьютере или в роутере: «Приложения» → «Диски и принтеры»).
 3. Создайте на флешке папку `install` и положите туда скачанный файл.
