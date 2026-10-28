@@ -53,8 +53,18 @@ fi
 # --- 1. Сеть ----------------------------------------------------------------
 step 1/6 "Проверка доступа в интернет..."
 i=0
-until curl -s -o /dev/null -m 8 http://bin.entware.net/ || curl -s -o /dev/null -m 8 http://github.com/ \
-    || curl -s -o /dev/null -m 8 https://ya.ru/; do
+# На только что установленном Entware curl ещё нет — тогда проверяем через wget из busybox
+net_ok() {
+    for u in http://bin.entware.net/ http://github.com/ http://ya.ru/; do
+        if command -v curl >/dev/null 2>&1; then
+            curl -s -o /dev/null -m 8 "$u" && return 0
+        else
+            wget -q -T 8 -O /dev/null "$u" 2>/dev/null && return 0
+        fi
+    done
+    return 1
+}
+until net_ok; do
     i=$((i + 1))
     [ "$i" -ge 18 ] && die "нет доступа в интернет (ждали 3 минуты)"
     sleep 10
