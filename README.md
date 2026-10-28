@@ -31,15 +31,17 @@ curl -fsSL https://github.com/O1ezhan/xkeen-happ/releases/latest/download/instal
 2. Отформатируйте флешку в **EXT4** (на компьютере или в роутере: «Приложения» → «Диски и принтеры»).
 3. Создайте на флешке папку `install` и положите туда скачанный файл.
 4. Вставьте флешку в роутер: «Управление» → «OPKG» → выберите флешку → «Сохранить».
-5. Через 5–10 минут откройте `http://192.168.1.1:8099`, задайте пароль и вставьте подписку.
+5. Через 5–10 минут откройте `http://<адрес роутера>:8099` (обычно `192.168.1.1` или `192.168.0.1`), задайте пароль и вставьте подписку.
 
-| Процессор | Модели |
+| Архив | Модели |
 |---|---|
-| `aarch64` | Netcraze Ultra (NC-1812), Keenetic Peak (KN-2710), Ultra (KN-1811), Hopper (KN-3810), Giga (KN-1012) и другие на ARM |
-| `mipsel` | Keenetic Giga (KN-1010/1011), Viva (KN-1910/1912), Extra (KN-1710/1711/1713), Speedster (KN-3010) и другие на MT7621/MT7628 |
-| `mips` | DSL-модели (Duo, Skipper DSL и др.) |
+| `aarch64` | **Netcraze:** Ultra (NC-1812), Giga (NC-1012), Hopper (NC-3811), Hopper SE (NC-3812)<br>**Keenetic:** Peak (KN-2710), Titan (KN-1811), Hero (KN-1012), Hopper (KN-3811), Hopper SE (KN-3812) |
+| `mipsel` | **Netcraze:** Viva (NC-1913)<br>**Keenetic:** Hopper (KN-3810), Hero 4G (KN-2310), Hero 4G+ (KN-2311), Skipper 4G (KN-2910), Giga (KN-1010, KN-1011), Ultra (KN-1810), Viva (KN-1910), Extra (KN-1710, KN-1711), KN-1410, KN-2610 |
+| `mips` | **Keenetic:** Skipper DSL (KN-2112), Hopper DSL (KN-3610), DSL (KN-2010), Duo (KN-2110, KN-2111), KN-2410, KN-2510 |
 
-Точно проверить процессор можно в [справке Keenetic](https://help.keenetic.com/) по вашей модели. Если выбрали не тот файл — роутер просто не начнёт установку, ничего не сломается.
+Таблица составлена по справке Keenetic и Netcraze (статья «Установка Entware на USB-накопитель» для каждой модели). Нужны USB-порт и роутер в режиме «Интернет-центр». Модели без USB (Start, Lite, City, Air и т. п.) не подходят.
+
+Если вашей модели нет в таблице, откройте на [support.keenetic.com](https://support.keenetic.com/) или [support.netcraze.ru](https://support.netcraze.ru/) статью своей модели про установку Entware на USB: там написано, какой архив нужен. Если выбрали не тот файл — роутер просто не начнёт установку, ничего не сломается.
 
 ### Компоненты прошивки
 
