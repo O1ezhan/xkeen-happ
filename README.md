@@ -135,6 +135,6 @@ sh scripts/build-release.sh   # dist/: install.sh, архивы для флеш�
 
 ## Благодарности и лицензия
 
-[XKeen](https://github.com/jameszeroX/XKeen) — jameszeroX, [Xray-core](https://github.com/XTLS/Xray-core) — XTLS, [Entware](https://entware.net/), шрифт [Onest](https://github.com/simpletype-ru/Onest) (SIL OFL), фото гор — [MonikaP, Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Snowy_mountain_range.jpg) (CC0). Проект не связан с Happ, Keenetic и Netcraze; названия принадлежат их владельцам.
+[XKeen](https://github.com/jameszeroX/XKeen) — jameszeroX, [Xray-core](https://github.com/XTLS/Xray-core) — XTLS, [Entware](https://entware.net/), шрифт [Onest](https://github.com/simpletype-ru/Onest) (SIL OFL), флаги — [Twemoji](https://github.com/twitter/twemoji) через [Twemoji Country Flags](https://github.com/talkjs/country-flag-emoji-polyfill) (CC BY 4.0), фото гор — [MonikaP, Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Snowy_mountain_range.jpg) (CC0). Проект не связан с Happ, Keenetic и Netcraze; названия принадлежат их владельцам.
 
 Лицензия MIT, см. [LICENSE](LICENSE).
