@@ -1128,7 +1128,7 @@ document.querySelectorAll('.seg [data-days]').forEach(b => b.addEventListener('c
 
 async function loadAnalytics() {
   try {
-    const d = await api('analytics&days=' + anDays);
+    const d = await api('analytics&days=' + anDays, {});
     if (!d.ok) { toast(d.message || 'Нет данных'); return; }
     A = d; renderAnalytics();
   } catch (e) { quiet(e); }
