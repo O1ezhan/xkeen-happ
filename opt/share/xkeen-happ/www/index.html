@@ -162,9 +162,10 @@ textarea.input { min-height: 96px; resize: vertical; font-size: 13.5px; line-hei
 /* Переключатель */
 .switch { position: relative; width: 46px; height: 28px; flex: none; }
 .switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
-.switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--line); transition: background .15s; }
+/* выключено — красный, включено — зелёный (просьба владельца 29.10: включённые были без цвета на фоне «Альпы») */
+.switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--bad); transition: background .15s; }
 .switch span::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .15s; }
-.switch input:checked + span { background: var(--cable); }
+.switch input:checked + span { background: var(--ok); }
 .switch input:checked + span::after { transform: translateX(18px); }
 .switch input:disabled + span { opacity: .45; }
 .switch input:focus-visible + span { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -367,7 +368,6 @@ html.alps .btn.primary { background: linear-gradient(135deg, #0b6f9e, #1590c9); 
 html.alps .btn.quiet { background: none; border-color: transparent; }
 html.alps .input, html.alps textarea.input { background: rgba(255,255,255,.75); border-color: rgba(16,34,54,.14); }
 html.alps .input:focus { background: #fff; }
-html.alps .switch span { background: rgba(16,34,54,.18); }
 html.alps .hop-icon { background: rgba(255,255,255,.7); border-color: rgba(16,34,54,.12); }
 html.alps .status[data-state="ok"] .hop-icon { background: #e6f5ec; }
 html.alps .list-row[aria-checked="true"], html.alps button.row:hover, html.alps .list-row.pick:hover { background: rgba(255,255,255,.55); }
@@ -546,7 +546,7 @@ html.alps .seg button[aria-pressed="true"] { background: #fff; }
       </div>
 
       <div class="section">
-        <div class="section-head"><h2>Всегда через VPN</h2><span class="hint">в режиме «Только заблокированные»</span></div>
+        <div class="section-head"><h2>Всегда через VPN</h2><span class="hint">в любом режиме; в «Всё через VPN» они и так идут через VPN</span></div>
         <div class="panel rows">
           <div class="row"><div class="row-main"><div class="row-title">Нейросети</div><div class="row-sub">ChatGPT, Claude, Gemini, Perplexity, Grok, Midjourney</div></div><label class="switch"><input type="checkbox" class="preset" value="ai" aria-label="Нейросети" /><span></span></label></div>
           <div class="row"><div class="row-main"><div class="row-title">Соцсети и мессенджеры</div><div class="row-sub">Instagram, Facebook, X, LinkedIn, WhatsApp, Signal</div></div><label class="switch"><input type="checkbox" class="preset" value="social" aria-label="Соцсети и мессенджеры" /><span></span></label></div>
@@ -1160,9 +1160,12 @@ function renderAnalytics() {
   A.health.forEach(([, cnt, good, off, ms]) => { n += cnt - off; ok += good; if (ms) { msSum += ms * good; msN += good; } });
   const up = n ? ok / n * 100 : null;
 
-  // --- скорость по серверам ---
+  // --- скорость по серверам: только серверы текущей подписки (старые имена остаются в истории роутера) ---
+  const cur = new Set(A.current || []);
+  const isCur = name => !cur.size || cur.has(name);
   const bySrv = new Map();
   A.speed.forEach(([b, name, kb, cnt, zeros]) => {
+    if (!isCur(name)) return;
     if (!bySrv.has(name)) bySrv.set(name, { name, pts: [], sum: 0, n: 0, zeros: 0 });
     const s = bySrv.get(name);
     s.pts.push([b, mbit(kb)]); s.sum += kb * cnt; s.n += cnt; s.zeros += zeros;
@@ -1180,7 +1183,7 @@ function renderAnalytics() {
     const k = Math.floor((h + off) / tStep) * tStep - off, sum = upB + downB;
     if (!tb.has(k)) tb.set(k, { vpn: 0, direct: 0 });
     if (name === 'direct') { tb.get(k).direct += sum; directTotal += sum; }
-    else if (name !== 'block') { tb.get(k).vpn += sum; vpnTotal += sum; perSrv.set(name, (perSrv.get(name) || 0) + sum); }
+    else if (name !== 'block') { tb.get(k).vpn += sum; vpnTotal += sum; if (isCur(name)) perSrv.set(name, (perSrv.get(name) || 0) + sum); }
   });
 
   const switches = A.events.filter(e => e[1] === 'switch').length;
@@ -1237,11 +1240,15 @@ function renderSpeed(from, to, servers) {
   const x = t => left + (t - from) / (to - from) * (w - left), y = v => top + (1 - v / nice) * (h - top - bottom);
   let g = '';
   for (let i = 0; i <= 4; i++) { const v = nice * i / 4; g += `<line class="grid" x1="${left}" x2="${w}" y1="${y(v)}" y2="${y(v)}"/><text x="${left - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`; }
-  const gap = A.step * 2.5;
   const lines = shown.slice().reverse().map(s => {
+    // разрыв линии — только если замеров не было заметно дольше обычного: XKeen меряет раз в 15–90 минут
+    const iv = s.pts.slice(1).map((p, i) => p[0] - s.pts[i][0]).sort((a, b) => a - b);
+    const gap = Math.max(A.step * 2.5, (iv[Math.floor(iv.length / 2)] || 0) * 2.5);
     let d = '', prev = null;
     s.pts.forEach(([t, v]) => { d += (prev == null || t - prev > gap ? 'M' : 'L') + x(t).toFixed(1) + ' ' + y(v).toFixed(1); prev = t; });
-    const dots = s.pts.length < 3 ? s.pts.map(([t, v]) => `<circle cx="${x(t)}" cy="${y(v)}" r="3" fill="${s.color}"/>`).join('') : '';
+    // одиночные замеры (без соседей в пределах разрыва) — точкой, иначе их не видно
+    const lone = s.pts.filter((p, i) => !(i && p[0] - s.pts[i - 1][0] <= gap) && !(i < s.pts.length - 1 && s.pts[i + 1][0] - p[0] <= gap));
+    const dots = (s.pts.length < 3 ? s.pts : lone).map(([t, v]) => `<circle cx="${x(t)}" cy="${y(v)}" r="3" fill="${s.color}"/>`).join('');
     return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>${dots}`;
   }).join('');
   box.innerHTML = svgEl(w, h, `<g>${g}</g><g transform="translate(0,0)">${timeTicks(from, to, w, x).replace(/y2="100%"/g, `y2="${h - bottom}"`)}</g>${lines}<line class="guide" id="anGuide" x1="0" x2="0" y1="${top}" y2="${h - bottom}" visibility="hidden"/>`);

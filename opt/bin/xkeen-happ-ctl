@@ -342,7 +342,10 @@ analytics() {
         # последние 300 событий
         [ -f "$STATS_DIR/events.tsv" ] && awk -F'\t' -v f="$from" '$1 >= f' "$STATS_DIR/events.tsv" | tail -n 300 \
             | awk -F'\t' '{ printf "%s[%d,\"%s\",\"%s\"]", sep, $1, $2, $3; sep = "," }'
-        printf ']}\n'
+        # серверы текущей подписки: после смены подписки старые имена остаются в истории, но не в рейтинге
+        printf '],"current":'
+        server_names | cut -f2 | jq -R . 2>/dev/null | jq -sc . 2>/dev/null || printf '[]'
+        printf '}\n'
     }
 }
 
