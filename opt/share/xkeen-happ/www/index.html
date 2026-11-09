@@ -378,10 +378,73 @@ html.alps .seg button[aria-pressed="true"] { background: #fff; }
   html.alps .nav { background: rgba(255, 255, 255, .72); border-top-color: rgba(255,255,255,.9); -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%); }
   html.alps .nav-item[aria-current="page"] { background: none; border: 0; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
+
+/* ================= Тема «Аврора»: ночное небо, полярное сияние, тёмное стекло ================= */
+html.aurora {
+  --paper: #0b1020;
+  --surface: rgba(22, 30, 60, .72);
+  --sunken: rgba(10, 14, 30, .6);
+  --ink: #e8eefc;
+  --muted: #aab7d8;
+  --faint: #7d8cb2;
+  --line: rgba(140, 170, 255, .28);
+  --cable: #4fd8c0;
+  --cable-soft: rgba(79, 216, 192, .14);
+  --ok: #4ade80;
+  --ok-soft: rgba(74, 222, 128, .15);
+  --warn: #fbbf24;
+  --warn-soft: rgba(251, 191, 36, .16);
+  --bad: #f87171;
+  --bad-soft: rgba(248, 113, 113, .14);
+  --focus: #4fd8c0;
+  --shadow: 0 14px 44px rgba(0, 0, 0, .5);
+  color-scheme: dark;
+}
+html.aurora body { background: #0b1020; }
+html.aurora .scene { display: block; position: fixed; inset: -2%; z-index: -1; pointer-events: none;
+  background: #0b1020 url(img/bg-aurora-wide.jpg) center 60% / cover no-repeat; animation: breathe 80s ease-in-out infinite alternate; }
+@media (max-aspect-ratio: 3/4) { html.aurora .scene { background-image: url(img/bg-aurora-tall.jpg); background-position: center top; } }
+html.aurora .scene::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(5,9,22,.35), rgba(5,9,22,0) 38%, rgba(5,9,22,.4)); }
+@media (prefers-reduced-motion: reduce) { html.aurora .scene { animation: none; } }
+
+html.aurora .panel, html.aurora .choice label, html.aurora .savebar, html.aurora .dialog, html.aurora .nav-item[aria-current="page"] {
+  background: linear-gradient(165deg, rgba(24, 32, 62, .80), rgba(11, 15, 32, .68));
+  border: 1px solid rgba(140, 170, 255, .18);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.06), var(--shadow);
+  -webkit-backdrop-filter: blur(18px) saturate(150%); backdrop-filter: blur(18px) saturate(150%);
+}
+html.aurora .rows > * + * { border-top-color: rgba(140, 170, 255, .14); }
+html.aurora .nav-foot { color: var(--muted); }
+html.aurora .nav { border-right-color: rgba(140,170,255,.16); background: rgba(10, 14, 30, .62); -webkit-backdrop-filter: blur(16px) saturate(150%); backdrop-filter: blur(16px) saturate(150%); }
+html.aurora .page-head h1, html.aurora .section-head h2 { text-shadow: 0 1px 3px rgba(0,0,0,.7), 0 0 22px rgba(79, 216, 192, .25); }
+html.aurora .section-head h2, html.aurora .page-head > div { background: rgba(10, 14, 30, .55); padding: 3px 12px; margin-left: -12px; border-radius: 10px;
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+html.aurora .section-head .btn.quiet { background: rgba(10,14,30,.55); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+html.aurora .section-head .hint, html.aurora .page-head p { color: #c3cfe9; text-shadow: 0 1px 8px rgba(0,0,0,.7); }
+html.aurora .choice label:has(input:checked) { background: linear-gradient(165deg, rgba(28,42,74,.9), rgba(13,20,40,.8)); border-color: #4fd8c0; }
+html.aurora .btn { background: rgba(20, 28, 54, .72); border-color: rgba(140,170,255,.2); color: #e8eefc; }
+html.aurora .btn:hover { background: rgba(30, 40, 74, .85); }
+html.aurora .btn.primary { background: linear-gradient(135deg, #2dd4bf, #38bdf8); border-color: transparent; color: #06202b; box-shadow: 0 6px 20px rgba(45, 212, 191, .30); }
+html.aurora .btn.quiet { background: none; border-color: transparent; }
+html.aurora .input, html.aurora textarea.input { background: rgba(16, 22, 44, .72); border-color: rgba(140,170,255,.2); color: #e8eefc; }
+html.aurora .input:focus { background: rgba(20, 28, 54, .9); }
+html.aurora .hop-icon { background: rgba(16, 22, 44, .7); border-color: rgba(140,170,255,.2); }
+html.aurora .status[data-state="ok"] .hop-icon { background: rgba(74, 222, 128, .18); }
+html.aurora .list-row[aria-checked="true"], html.aurora button.row:hover, html.aurora .list-row.pick:hover { background: rgba(28, 38, 72, .6); }
+html.aurora pre.log { background: rgba(10, 14, 30, .6); color: #c3cfe9; }
+html.aurora .overlay { background: rgba(5, 8, 18, .5); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+html.aurora .seg button[aria-pressed="true"] { background: rgba(45, 212, 191, .2); color: #eafcfa; }
+@media (max-width: 820px) {
+  html.aurora .nav { background: rgba(10, 14, 30, .72); border-top-color: rgba(140,170,255,.18); -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%); }
+  html.aurora .nav-item[aria-current="page"] { background: none; border: 0; box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
 </style>
 <script>
   // тема до отрисовки страницы, чтобы не мигала
-  try { if ((localStorage.getItem('xh-theme') || 'alps') === 'alps') document.documentElement.classList.add('alps'); } catch (e) { document.documentElement.classList.add('alps'); }
+  try {
+    const t0 = localStorage.getItem('xh-theme') || 'alps';
+    document.documentElement.classList.add(t0 === 'classic' ? '' : t0 === 'aurora' ? 'aurora' : 'alps');
+  } catch (e) { document.documentElement.classList.add('alps'); }
 </script>
 </head>
 <body>
@@ -615,7 +678,7 @@ html.alps .seg button[aria-pressed="true"] { background: #fff; }
         <div class="section-head"><h2>Защита</h2></div>
         <div class="panel rows">
           <div class="row"><div class="row-main"><div class="row-title">Оформление</div><div class="row-sub">Запоминается в этом браузере</div></div>
-            <div class="seg" role="group" aria-label="Оформление"><button type="button" data-theme="alps">Горы</button><button type="button" data-theme="classic">Классика</button></div></div>
+            <div class="seg" role="group" aria-label="Оформление"><button type="button" data-theme="alps">Горы</button><button type="button" data-theme="aurora">Аврора</button><button type="button" data-theme="classic">Классика</button></div></div>
           <div class="row"><div class="row-main"><div class="row-title">Kill switch</div><div class="row-sub" id="ksSub">Если VPN упал, заблокированные сайты не откроются в обход.</div></div><label class="switch"><input type="checkbox" id="ksOn" aria-label="Kill switch" /><span></span></label></div>
           <div class="row"><div class="row-main"><div class="row-title">Последний рабочий конфиг</div><div class="row-sub" id="goodSub">После каждого изменения роутер проверяет VPN и при сбое сам возвращает рабочий конфиг.</div></div><button class="btn" onclick="rollback()">Вернуть</button></div>
           <div class="row"><div class="row-main"><div class="row-title">Пароль панели</div></div><button class="btn" onclick="openAuth('change')">Сменить</button></div>
@@ -1103,12 +1166,14 @@ function copyDoctor() {
 
 /* ---------- оформление ---------- */
 function setTheme(t) {
-  document.documentElement.classList.toggle('alps', t === 'alps');
+  const cls = document.documentElement.classList;
+  cls.remove('alps', 'aurora');
+  if (t === 'aurora') cls.add('aurora'); else if (t === 'alps') cls.add('alps');
   document.querySelectorAll('[data-theme]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.theme === t)));
   try { localStorage.setItem('xh-theme', t); } catch (e) {}
 }
 document.querySelectorAll('[data-theme]').forEach(b => b.addEventListener('click', () => setTheme(b.dataset.theme)));
-setTheme(document.documentElement.classList.contains('alps') ? 'alps' : 'classic');
+setTheme(document.documentElement.classList.contains('aurora') ? 'aurora' : document.documentElement.classList.contains('alps') ? 'alps' : 'classic');
 
 /* ---------- аналитика ---------- */
 // Данные копит сам роутер (xkeen-happ-ctl stats-collect, раз в 5 минут), графики рисуются здесь
