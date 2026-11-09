@@ -123,7 +123,9 @@ ensure_config() {
   "discord_voice": true,
   "ui_port": 8099,
   "user_agent": "$DEFAULT_UA",
-  "hwid": "$hwid"
+  "hwid": "$hwid",
+  "profiles": [],
+  "active_profile": ""
 }
 INNER_CFG
     fi
@@ -1306,6 +1308,66 @@ save_config() {
     [ "$old_src" != "$new_src" ] || [ "$(printf '%s' "$input" | jq -r '.fetch_now // false')" = "true" ]
 }
 
+# --- Профили подписок (несколько наборов «подписка + режим + выбор сервера») ----------
+# Профиль хранит копию активных полей; активным остаются sub_url/manual_links/routing_mode/
+# selection_mode в config.json — переключение просто переносит их туда, поэтому весь
+# существующий код (update/apply/status) работает без изменений.
+profile_list() {
+    ensure_config
+    jq -c '{active_profile: (.active_profile // ""), profiles: (.profiles // [])}' "$CONFIG_FILE"
+}
+
+profile_save() {
+    # stdin: {"id":"…"(необяз.),"name":"…","sub_url":"…","manual_links":"…","routing_mode":"…","selection_mode":"…"}
+    ensure_config
+    input=$(cat)
+    printf '%s' "$input" | jq -e 'type == "object"' >/dev/null 2>&1 || { echo "Некорректный JSON" >&2; return 2; }
+    name=$(printf '%s' "$input" | jq -r '.name // ""')
+    [ -n "$name" ] || { echo "Укажите имя профиля" >&2; return 2; }
+    [ "${#name}" -le 64 ] || { echo "Имя профиля слишком длинное (до 64 символов)" >&2; return 2; }
+    id=$(printf '%s' "$input" | jq -r '.id // ""')
+    [ -n "$id" ] || id="p$(date +%s)$$"
+    rm_=$(printf '%s' "$input" | jq -r '.routing_mode // "blocked"')
+    case "$rm_" in blocked|except_ru|full) ;; *) rm_=blocked ;; esac
+    sm_=$(printf '%s' "$input" | jq -r '.selection_mode // "auto"')
+    case "$sm_" in auto|manual) ;; *) sm_=auto ;; esac
+    prof=$(printf '%s' "$input" | jq -c --arg id "$id" --arg name "$name" --arg rm "$rm_" --arg sm "$sm_"         '{id: $id, name: $name, sub_url: (.sub_url // ""), manual_links: (.manual_links // ""), routing_mode: $rm, selection_mode: $sm}')
+    jq -c --argjson p "$prof" '
+        (.profiles // []) as $ps
+        | .profiles = ($ps | map(select(.id != $p.id)) + [$p])
+        | .active_profile = (.active_profile // "")
+    ' "$CONFIG_FILE" > "$CONFIG_FILE.tmp.$$" && mv "$CONFIG_FILE.tmp.$$" "$CONFIG_FILE"         || { echo "Не удалось сохранить профиль" >&2; return 1; }
+    printf '%s' "$prof"
+}
+
+profile_apply() {
+    id="${1:-}"
+    [ -n "$id" ] || { echo "Укажите id профиля" >&2; return 2; }
+    ensure_config
+    prof=$(jq -c --arg id "$id" '(.profiles // []) | .[] | select(.id == $id)' "$CONFIG_FILE")
+    [ -n "$prof" ] || { echo "Профиль не найден" >&2; return 1; }
+    jq -c --argjson p "$prof" '
+        .sub_url = ($p.sub_url // "")
+        | .manual_links = ($p.manual_links // "")
+        | .routing_mode = ($p.routing_mode // "blocked")
+        | .selection_mode = ($p.selection_mode // "auto")
+        | .active_profile = $p.id
+    ' "$CONFIG_FILE" > "$CONFIG_FILE.tmp.$$" && mv "$CONFIG_FILE.tmp.$$" "$CONFIG_FILE"         || { echo "Не удалось применить профиль" >&2; return 1; }
+    printf '%s' "$id"
+}
+
+profile_del() {
+    id="${1:-}"
+    [ -n "$id" ] || { echo "Укажите id профиля" >&2; return 2; }
+    ensure_config
+    jq -c --arg id "$id" '
+        (.profiles // []) as $ps
+        | .profiles = ($ps | map(select(.id != $id)))
+        | if (.active_profile // "") == $id then .active_profile = "" else . end
+    ' "$CONFIG_FILE" > "$CONFIG_FILE.tmp.$$" && mv "$CONFIG_FILE.tmp.$$" "$CONFIG_FILE"         || { echo "Не удалось удалить профиль" >&2; return 1; }
+    printf '%s' "$id"
+}
+
 case "${1:-status}" in
     update)
         take_lock || exit 1
@@ -1365,6 +1427,16 @@ case "${1:-status}" in
         ;;
     cron)
         sync_cron
+        ;;
+    profile)
+        take_lock || exit 1
+        case "${2:-list}" in
+            list)  profile_list ;;
+            apply) profile_apply "${3:-}" ;;
+            save)  profile_save ;;
+            del)   profile_del "${3:-}" ;;
+            *) echo "Использование: xkeen-sub profile {list|apply ID|save|del ID}" >&2; exit 2 ;;
+        esac
         ;;
     status)
         ensure_config

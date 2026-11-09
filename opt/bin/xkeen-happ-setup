@@ -35,12 +35,17 @@ while [ $# -gt 0 ]; do
         --skip-xkeen) SKIP_XKEEN="1"; shift ;;
         --no-dns)     RCI_ARGS="$RCI_ARGS --no-dns"; shift ;;
         --no-policy)  RCI_ARGS="$RCI_ARGS --no-policy"; shift ;;
+        --dry-run)    DRYRUN=1; shift ;;
         *)            echo "Неизвестный параметр: $1" >&2; exit 2 ;;
     esac
 done
 
 step() { printf '\n\033[1;36m[%s]\033[0m %s\n' "$1" "$2"; }
 die()  { printf '\033[1;31mОшибка:\033[0m %s\n' "$1" >&2; exit 1; }
+DRYRUN="${DRYRUN:-0}"
+[ "$DRYRUN" = "1" ] && printf '\033[1;33mDRY-RUN:\033[0m проверяю и показываю план, ничего не меняю.\n'
+# skip "описание" — в dry-run печатает и возвращает 0 (команду не выполняем)
+skip() { [ "$DRYRUN" = "1" ] && { printf '  [dry-run] %s\n' "$*"; return 0; }; return 1; }
 
 # Один запуск за раз (флешка при загрузке + ручной запуск по SSH)
 exec 8>/tmp/xkeen-happ-setup.lock
@@ -72,11 +77,14 @@ done
 
 # --- 2. Пакеты Entware ---------------------------------------------------------
 step 2/6 "Установка пакетов Entware: $PACKAGES"
-opkg update >/dev/null 2>&1 || echo "  opkg update завершился с ошибкой, пробуем установить из кэша"
-# shellcheck disable=SC2086
-opkg install $PACKAGES || echo "  часть пакетов не установилась — проверяем, чего не хватает"
+if skip "opkg update && opkg install $PACKAGES"; then :; else
+    opkg update >/dev/null 2>&1 || echo "  opkg update завершился с ошибкой, пробуем установить из кэша"
+    # shellcheck disable=SC2086
+    opkg install $PACKAGES || echo "  часть пакетов не установилась — проверяем, чего не хватает"
+fi
 for bin in curl jq lighttpd; do
-    command -v "$bin" >/dev/null 2>&1 || die "не установлен $bin (opkg install $PACKAGES)"
+    if command -v "$bin" >/dev/null 2>&1; then continue; fi
+    if [ "$DRYRUN" = "1" ]; then echo "  [dry-run] будет установлен: $bin"; else die "не установлен $bin (opkg install $PACKAGES)"; fi
 done
 [ -s "$OPT_DIR/etc/ssl/certs/ca-certificates.crt" ] || die "не установлен ca-bundle — без него нельзя проверить сертификаты"
 # Пакет lighttpd ставит свой автозапуск (S80lighttpd) — второй веб-сервер не нужен
@@ -97,10 +105,15 @@ case "$missing" in
         die "нет нужных компонентов прошивки"
         ;;
 esac
-# shellcheck disable=SC2086
-"$OPT_DIR/bin/xkeen-rci-setup" setup $RCI_ARGS || echo "  RCI недоступен — пропускаем (политику можно создать вручную)"
+skip "xkeen-rci-setup setup $RCI_ARGS" || { 
+    # shellcheck disable=SC2086
+    "$OPT_DIR/bin/xkeen-rci-setup" setup $RCI_ARGS || echo "  RCI недоступен — пропускаем (политику можно создать вручную)"
+}
 
 # --- 4. XKeen + Xray + геобазы -------------------------------------------------------
+if [ "$DRYRUN" = "1" ]; then
+    step 4/6 "XKeen: [dry-run] установка пропущена"
+else
 if [ "$SKIP_XKEEN" = "1" ]; then
     step 4/6 "Установка XKeen пропущена (--skip-xkeen)"
 elif [ -x "$OPT_DIR/sbin/xkeen" ] && [ -x "$OPT_DIR/sbin/xray" ]; then
@@ -142,6 +155,8 @@ else
     [ -x "$OPT_DIR/sbin/xray" ] || die "после установки XKeen нет ядра Xray"
 fi
 
+fi
+
 # --- 5. Подписка ------------------------------------------------------------------
 step 5/6 "Настройка подписки..."
 "$OPT_DIR/bin/xkeen-sub" status >/dev/null 2>&1
@@ -160,7 +175,8 @@ fi
 [ -n "$ROUTING_MODE" ] && patch=$(printf '%s' "$patch" | jq --arg m "$ROUTING_MODE" '. + {routing_mode: $m}')
 [ -n "$SELECTION_MODE" ] && patch=$(printf '%s' "$patch" | jq --arg s "$SELECTION_MODE" '. + {selection_mode: $s}')
 
-printf '%s' "$patch" | "$OPT_DIR/bin/xkeen-sub" save-config
+skip "xkeen-sub save-config (настройки подписки)" ||
+    printf '%s' "$patch" | "$OPT_DIR/bin/xkeen-sub" save-config
 rc=$?
 [ "$rc" -ge 2 ] && die "неверные параметры подписки"
 
@@ -169,12 +185,14 @@ if [ -n "$has_source" ]; then
     # Сразу после сохранения настроек роутера (DNS, политика) сеть может пропасть на несколько
     # секунд — даём подписке три попытки
     n=0
+    if skip "xkeen-sub update (загрузка подписки)"; then :; else
     until "$OPT_DIR/bin/xkeen-sub" update; do
         n=$((n + 1))
         [ "$n" -ge 3 ] && break
         echo "  Подписка не скачалась, повтор через 10 с..."
         sleep 10
     done
+    fi
     if [ "$n" -lt 3 ]; then
         echo "  Подписка загружена: $(jq -r '.profile_title' "$HAPP_DIR/state.json") ($(jq -r '.server_count' "$HAPP_DIR/state.json") серв.)"
         # По умолчанию — выбор сервера по реальной скорости (XKeen 2.1+), если серверов несколько
@@ -201,12 +219,12 @@ done
 
 # --- 6. Веб-панель ------------------------------------------------------------------
 step 6/6 "Запуск веб-панели..."
-"$OPT_DIR/etc/init.d/S99xkeen-happ" restart || die "панель не запустилась"
+skip "S99xkeen-happ restart" || { "$OPT_DIR/etc/init.d/S99xkeen-happ" restart || die "панель не запустилась"; }
 
-date '+%F %T' > "$HAPP_DIR/.installed"
+skip "пометка установки (.installed)" || date '+%F %T' > "$HAPP_DIR/.installed"
 
 # Стартовый пакет больше не нужен: возвращаем сетевые репозитории Entware и освобождаем место
-if [ -d "$OFFLINE_DIR" ]; then
+if [ -d "$OFFLINE_DIR" ] && [ "$DRYRUN" != "1" ]; then
     [ -f "$OFFLINE_DIR/opkg.conf.online" ] && cp "$OFFLINE_DIR/opkg.conf.online" "$OPT_DIR/etc/opkg.conf"
     rm -rf "$OFFLINE_DIR"
 fi
