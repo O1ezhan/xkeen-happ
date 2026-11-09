@@ -22,9 +22,13 @@ if command -v nc >/dev/null 2>&1 && ! nc -z -w 3 "$ROUTER_IP" 222 2>/dev/null; t
 fi
 echo "SSH на порту $PORT. Пароль root по умолчанию: keenetic"
 
-# Ссылка передаётся через stdin, а не в командной строке: в ней бывают &, ? и кавычки
+# Ссылка передаётся через stdin, а не в командной строке: в ней бывают &, ? и кавычки.
+# На свежем Entware curl ещё нет — качаем установщик через wget из busybox, если curl отсутствует.
 printf '%s\n' "$SUB_URL" | ssh -p "$PORT" -o StrictHostKeyChecking=accept-new "root@$ROUTER_IP" \
-    "read -r u; curl -fsSL '$URL' -o /opt/tmp/install.sh && if [ -n \"\$u\" ]; then sh /opt/tmp/install.sh --sub \"\$u\"; else sh /opt/tmp/install.sh; fi"
+    "PATH=/opt/sbin:/opt/bin:$PATH; read -r u; mkdir -p /opt/tmp; \
+     if command -v curl >/dev/null 2>&1; then curl -fsSL '$URL' -o /opt/tmp/install.sh; \
+     else wget -O /opt/tmp/install.sh '$URL'; fi || { echo 'не удалось скачать установщик'; exit 1; }; \
+     if [ -n \"\$u\" ]; then sh /opt/tmp/install.sh --sub \"\$u\"; else sh /opt/tmp/install.sh; fi"
 
 echo "Панель: http://$ROUTER_IP:8099 — при первом входе задайте пароль."
 if command -v open >/dev/null 2>&1; then open "http://$ROUTER_IP:8099" || true
