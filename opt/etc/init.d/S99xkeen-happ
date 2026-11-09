@@ -33,6 +33,8 @@ write_lighttpd_conf() {
 server.document-root = "$WWW_DIR"
 server.port = $PORT
 server.bind = "$1"
+# не выдаём версию веб-сервера (маскировка: панель не палится как lighttpd по заголовку Server)
+server.tag = ""
 server.pid-file = "$PID_FILE"
 server.errorlog = "$LOG"
 server.max-request-size = 256
