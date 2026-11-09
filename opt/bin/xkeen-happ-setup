@@ -86,6 +86,16 @@ for bin in curl jq lighttpd; do
     if command -v "$bin" >/dev/null 2>&1; then continue; fi
     if [ "$DRYRUN" = "1" ]; then echo "  [dry-run] будет установлен: $bin"; else die "не установлен $bin (opkg install $PACKAGES)"; fi
 done
+# После обновления пакетов curl может оказаться новее libcurl (в метаданных Entware у curl
+# зависимость на libcurl без версии) — тогда curl падает с «undefined symbol». Проверяем
+# запуском и при необходимости ставим libcurl той же версии, что и curl.
+if [ "$DRYRUN" != "1" ] && command -v curl >/dev/null 2>&1 && ! curl --version >/dev/null 2>&1; then
+    echo "  curl сломан (несовпадение с libcurl) — переустанавливаю libcurl той же версии..."
+    opkg update >/dev/null 2>&1
+    opkg install --force-reinstall libcurl curl >/dev/null 2>&1
+    curl --version >/dev/null 2>&1 || die "curl не заработал: выполните по SSH opkg install --force-reinstall libcurl curl"
+    echo "  curl восстановлен: $(curl --version 2>/dev/null | head -n1)"
+fi
 [ -s "$OPT_DIR/etc/ssl/certs/ca-certificates.crt" ] || die "не установлен ca-bundle — без него нельзя проверить сертификаты"
 # Пакет lighttpd ставит свой автозапуск (S80lighttpd) — второй веб-сервер не нужен
 [ -f "$OPT_DIR/etc/init.d/S80lighttpd" ] && sed -i 's/^ENABLED=yes/ENABLED=no/' "$OPT_DIR/etc/init.d/S80lighttpd"
