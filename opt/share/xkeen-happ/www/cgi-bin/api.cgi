@@ -383,6 +383,28 @@ case "$action" in
         send_csv "200 OK" "$csv"
         ;;
 
+    profile-save)
+        if p=$(printf '%s' "$body" | "$XKEEN_SUB" profile save 2>/tmp/xh-pf.err); then
+            emit_status "Профиль сохранён" "true"
+        fi
+        fail "422 Unprocessable Entity" "$(cat /tmp/xh-pf.err 2>/dev/null)"
+        ;;
+
+    profile-apply)
+        if "$XKEEN_SUB" profile apply "$(field id)" >/dev/null 2>&1; then
+            "$XKEEN_SUB" update >/dev/null 2>&1
+            emit_status "Профиль применён" "true"
+        fi
+        fail "422 Unprocessable Entity" "Профиль не найден"
+        ;;
+
+    profile-del)
+        if "$XKEEN_SUB" profile del "$(field id)" >/dev/null 2>&1; then
+            emit_status "Профиль удалён" "true"
+        fi
+        fail "422 Unprocessable Entity" "Профиль не найден"
+        ;;
+
     killswitch)
         st=$(field state)
         err=$("$CTL" killswitch "$st" 2>&1) && send "200 OK" "$(jq -nc --arg s "$st" '{ok: true, message: ("Kill switch: " + (if $s == "on" then "включён" else "выключен" end))}')"

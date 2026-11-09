@@ -662,6 +662,19 @@ html.aurora .seg button[aria-pressed="true"] { background: rgba(45, 212, 191, .2
       </div>
 
       <div class="section">
+        <div class="section-head"><h2>Профили</h2><span class="hint">Несколько подписок и режимов — переключение в один клик</span></div>
+        <div class="panel rows" id="profileList">
+          <div class="row"><span class="hint">Профилей пока нет</span></div>
+        </div>
+        <div class="panel" style="margin-top:10px">
+          <div class="row">
+            <div class="row-main"><input class="input" id="profileName" placeholder="Имя профиля (например, «Основной»)" /></div>
+            <button class="btn primary" onclick="saveProfile()">Сохранить как профиль</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
         <div class="section-head"><h2>Уведомления в Telegram</h2></div>
         <div class="panel rows">
           <div class="row"><div class="row-main"><div class="row-sub" style="margin:0">Напишем, если VPN перестал работать, подписка не обновилась или скоро закончится. Создайте бота у @BotFather, вставьте его токен, отправьте боту любое сообщение и нажмите «Найти чат».</div></div></div>
@@ -879,6 +892,7 @@ function apply(data) {
   $('tgChat').value = cfg.tg_chat || '';
   $('tgToken').placeholder = cfg.tg_token ? 'Сохранён. Введите новый, чтобы заменить' : '123456789:AA…';
   $('notifyOn').checked = cfg.notify !== false;
+  renderProfiles(cfg);
   $('advLog').textContent = (data.logs || '') + '\n\n// 04_outbounds.json\n' + (data.outbounds_preview || '') + '\n\n// 05_routing.json\n' + (data.routing_preview || '');
 
   renderServers();
@@ -1052,6 +1066,43 @@ async function saveSubscription() {
 async function updateSub() {
   toast('Обновляю подписку…');
   try { const d = await api('update', {}); apply(d); toast(d.ok ? 'Подписка обновлена' : (d.message || 'Ошибка')); checkVpn(); } catch (e) { quiet(e); }
+}
+
+/* ---------- профили ---------- */
+function renderProfiles(cfg) {
+  const box = $('profileList'); if (!box) return;
+  const ps = (cfg && cfg.profiles) || [];
+  const active = (cfg && cfg.active_profile) || '';
+  if (!ps.length) {
+    box.innerHTML = '<div class="row"><span class="hint">Профилей пока нет. Введите подписку выше и нажмите «Сохранить как профиль».</span></div>';
+    return;
+  }
+  box.innerHTML = ps.map(p => `<div class="list-row">
+      <div class="row-main"><div class="row-title">${esc(p.name)}${p.id === active ? ' <span class="tag">активен</span>' : ''}</div>
+      <div class="row-sub">${esc(modeNames[p.routing_mode] || '')} · ${p.sub_url ? 'подписка' : 'ключи вручную'}</div></div>
+      <div class="row-end">
+        <button class="btn" onclick="applyProfile('${esc(p.id)}')" ${p.id === active ? 'disabled' : ''}>Применить</button>
+        <button class="btn quiet" onclick="delProfile('${esc(p.id)}')" aria-label="Удалить профиль">✕</button>
+      </div>
+    </div>`).join('');
+}
+async function saveProfile() {
+  const name = $('profileName').value.trim();
+  if (!name) { toast('Введите имя профиля'); return; }
+  const body = {
+    name,
+    sub_url: $('subUrl').value.trim(),
+    manual_links: $('manualLinks').value.trim(),
+    routing_mode: (document.querySelector('#modeChoice input:checked') || {}).value || 'blocked',
+    selection_mode: (S && S.config && S.config.selection_mode) || 'auto'
+  };
+  try { const d = await api('profile-save', body); apply(d); toast(d.ok ? 'Профиль сохранён' : (d.message || 'Ошибка')); } catch (e) { quiet(e); }
+}
+async function applyProfile(id) {
+  try { const d = await api('profile-apply', { id }); apply(d); toast(d.ok ? 'Профиль применён' : (d.message || 'Ошибка')); if (d.ok) checkVpn(); } catch (e) { quiet(e); }
+}
+async function delProfile(id) {
+  try { const d = await api('profile-del', { id }); apply(d); toast(d.ok ? 'Профиль удалён' : (d.message || 'Ошибка')); } catch (e) { quiet(e); }
 }
 
 function toggleSecret(id, btn) {
