@@ -1,0 +1,21 @@
+# Быстрые проверки на каждый push/PR: синтаксис shell + тесты парсера подписок.
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Синтаксис shell
+        run: |
+          for f in opt/bin/* opt/etc/init.d/* opt/share/xkeen-happ/www/cgi-bin/api.cgi scripts/*.sh scripts/install.sh.in deploy-unix.sh; do
+            sh -n "$f"
+          done
+
+      - name: Тесты парсера подписок
+        run: sh scripts/test-parser.sh

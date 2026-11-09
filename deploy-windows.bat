@@ -18,7 +18,7 @@ echo SSH на порту %PORT%
 echo.
 echo Подписку можно будет вставить в веб-панели после установки.
 echo.
-ssh -p %PORT% -o StrictHostKeyChecking=accept-new root@%ROUTER_IP% "curl -fsSL https://github.com/@REPO@/releases/latest/download/install.sh -o /opt/tmp/install.sh && sh /opt/tmp/install.sh"
+ssh -p %PORT% -o StrictHostKeyChecking=accept-new root@%ROUTER_IP% "PATH=/opt/sbin:/opt/bin:$PATH; mkdir -p /opt/tmp && (command -v curl >/dev/null 2>&1 && curl -fsSL https://github.com/@REPO@/releases/latest/download/install.sh -o /opt/tmp/install.sh || wget -O /opt/tmp/install.sh https://github.com/@REPO@/releases/latest/download/install.sh) && sh /opt/tmp/install.sh"
 if errorlevel 1 (
     echo.
     echo Не получилось. Проверьте IP, что Entware установлен, и пароль root.

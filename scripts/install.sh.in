@@ -9,6 +9,9 @@
 #                   --skip-xkeen, --no-dns, --no-policy
 #
 # Можно и одной командой: curl -fsSL <ссылка> | sh -s -- --sub "https://..."
+# На свежем Entware curl нет — скачивайте установщик через wget:
+#   wget -O install.sh <ссылка> && sh install.sh --sub "https://..."
+#   либо: wget -O - <ссылка> | sh -s -- --sub "https://..."
 #
 # Подходит для любой архитектуры (aarch64, mipsel, mips): сам скрипт — sh,
 # а XKeen и Xray скачиваются под процессор роутера.

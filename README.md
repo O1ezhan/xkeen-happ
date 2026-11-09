@@ -13,9 +13,15 @@
 
 ### Если Entware уже стоит
 
-Подключитесь к роутеру по SSH (логин `root`, пароль `keenetic`, порт `222` или `22`) и вставьте одну строку:
+Подключитесь к роутеру по SSH (логин `root`, пароль `keenetic`, порт `222` или `22`) и вставьте одну строку.
+
+> На только что установленном Entware `curl` ещё нет — используйте вариант с `wget` (он в busybox и есть всегда). Вариант с `curl` — если curl уже установлен.
 
 ```sh
+# wget — работает сразу после установки Entware
+wget -O - https://github.com/O1ezhan/xkeen-happ/releases/latest/download/install.sh | sh -s -- --sub "ВАША_ССЫЛКА_НА_ПОДПИСКУ"
+
+# curl — если curl уже установлен
 curl -fsSL https://github.com/O1ezhan/xkeen-happ/releases/latest/download/install.sh | sh -s -- --sub "ВАША_ССЫЛКА_НА_ПОДПИСКУ"
 ```
 
