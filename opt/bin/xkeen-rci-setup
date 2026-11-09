@@ -290,7 +290,9 @@ list_devices() {
     # на KeeneticOS < 5.2 токен не требуется.
     conf=$(rci_get "ip/hotspot/host")
     [ -z "$conf" ] && [ -n "$RCI_TOKEN_VAL" ] && conf=$(curl --connect-timeout 2 -m 5 -fsS "${RCI_URL}/ip/hotspot/host" 2>/dev/null)
-    [ -n "$conf" ] || conf="[]"
+    # Приводим к массиву устройств: RCI отдаёт либо массив, либо объект с ключом MAC;
+    # невалидный JSON не должен ронять весь список.
+    conf=$(printf '%s' "$conf" | jq -c 'if type == "array" then . elif type == "object" then (to_entries | map({mac: .key} + (.value // {}))) else [] end' 2>/dev/null || echo "[]")
     seg=$(running_config | sed -n 's/^[[:space:]]*policy \(Bridge0\|Home\) \([A-Za-z0-9]*\).*/\2/p' | head -n 1)
     hs=$(rci_get "show/ip/hotspot")
     [ -z "$hs" ] && [ -n "$RCI_TOKEN_VAL" ] && hs=$(curl --connect-timeout 2 -m 5 -fsS "${RCI_URL}/show/ip/hotspot" 2>/dev/null)
@@ -300,6 +302,7 @@ list_devices() {
     # Основной список — известные устройства роутера (show ip hotspot). Если их нет,
     # добираем активные из ARP (без имён — только mac/ip), чтобы вкладка не была пустой.
     hosts=$(printf '%s' "$hs" | _normalize_hosts)
+    [ -n "$hosts" ] || hosts="[]"
     if [ "$(printf '%s' "$hosts" | jq 'length' 2>/dev/null || echo 0)" = "0" ]; then
         hosts=$(printf '%s' "$arp" | jq -c '
           (.arp // .entries // . | if type == "array" then . elif type == "object" then [.] else [] end)

@@ -1100,8 +1100,11 @@ function deviceEmptyHint(d) {
   if (dbg.rci_ok === false) {
     html += '<div class="row"><span class="hint">⚠️ Роутер не отвечает по RCI (127.0.0.1:79). На KeeneticOS 5.2+ нужен rci_token.</span></div>';
   }
-  if (dbg.hotspot) {
-    html += '<div class="row"><pre class="log" style="margin:0;font-size:11px;white-space:pre-wrap">RCI show/ip/hotspot: ' + esc(String(dbg.hotspot).slice(0, 500)) + '</pre></div>';
+  const parts = [['hotspot', 'show/ip/hotspot'], ['host_conf', 'ip/hotspot/host'], ['arp', 'show/ip/arp']];
+  for (const [k, label] of parts) {
+    if (dbg[k]) {
+      html += '<div class="row"><pre class="log" style="margin:0;font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere">' + label + ': ' + esc(String(dbg[k]).slice(0, 400)) + '</pre></div>';
+    }
   }
   return html;
 }
