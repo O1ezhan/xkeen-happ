@@ -1358,6 +1358,11 @@ case "${1:-status}" in
         take_lock || exit 1
         ping_all_servers
         ;;
+    parse)
+        # Тестовый вход: ссылки читаются из stdin, в stdout — разобранный JSON.
+        # Нужен для автотестов парсера (scripts/test-parser.sh) и отладки.
+        parse_uris_to_json
+        ;;
     cron)
         sync_cron
         ;;
