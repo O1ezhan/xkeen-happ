@@ -323,8 +323,11 @@ case "$action" in
 
     devices)
         out=$("$OPT_DIR/bin/xkeen-rci-setup" devices 2>/dev/null)
-        printf '%s' "$out" | jq -e 'type == "array"' >/dev/null 2>&1 || fail "503 Service Unavailable" "Не удалось получить список устройств от роутера"
-        send "200 OK" "$(jq -nc --argjson d "$out" '{ok: true, devices: $d}')"
+        printf '%s' "$out" | jq -e 'type == "array"' >/dev/null 2>&1 || out="[]"
+        # Сырые ответы RCI — чтобы показать причину, если список пуст (без SSH)
+        debug=$("$OPT_DIR/bin/xkeen-rci-setup" devices-raw 2>/dev/null)
+        printf '%s' "$debug" | jq -e 'type == "object"' >/dev/null 2>&1 || debug="{}"
+        send "200 OK" "$(jq -nc --argjson d "$out" --argjson g "$debug" '{ok: true, devices: $d, debug: $g}')"
         ;;
 
     device-set)

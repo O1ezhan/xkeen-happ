@@ -264,13 +264,14 @@ ensure_direct_policy() {
 }
 
 # Сырые ответы RCI для диагностики вкладки «Устройства» (xkeen-rci-setup devices-raw)
+# Сырые ответы RCI для диагностики вкладки «Устройства» — одним JSON.
+# rci_ok=true, если RCI отвечает на show/version (иначе токен/доступ не в порядке).
 devices_raw() {
-    printf '=== show/ip/hotspot ===\n'
-    rci_get "show/ip/hotspot" | jq -c . 2>/dev/null || echo '(пусто/не JSON)'
-    printf '=== ip/hotspot/host ===\n'
-    rci_get "ip/hotspot/host" | jq -c . 2>/dev/null || echo '(пусто/не JSON)'
-    printf '=== show/ip/arp ===\n'
-    rci_get "show/ip/arp" | jq -c . 2>/dev/null || echo '(пусто/не JSON)'
+    ver=$(rci_get "show/version" | jq -c . 2>/dev/null)
+    hs=$(rci_get "show/ip/hotspot" | jq -c . 2>/dev/null)
+    conf=$(rci_get "ip/hotspot/host" | jq -c . 2>/dev/null)
+    arp=$(rci_get "show/ip/arp" | jq -c . 2>/dev/null)
+    jq -nc --arg v "${ver:-}" --arg h "${hs:-}" --arg c "${conf:-}" --arg a "${arp:-}"         '{rci_ok: ($v != ""), rci_version: $v, hotspot: $h, host_conf: $c, arp: $a}'
 }
 
 # Привести «хост/устройства» к массиву: RCI может вернуть [], объект с одним устройством
@@ -285,10 +286,16 @@ _normalize_hosts() {
 
 list_devices() {
     xk=$(policy_by_desc "xkeen"); dr=$(policy_by_desc "xkeen-direct")
-    conf=$(rci_get "ip/hotspot/host"); [ -n "$conf" ] || conf="[]"
+    # Если RCI не отвечает с токеном (неверный/протух rci_token), пробуем без него —
+    # на KeeneticOS < 5.2 токен не требуется.
+    conf=$(rci_get "ip/hotspot/host")
+    [ -z "$conf" ] && [ -n "$RCI_TOKEN_VAL" ] && conf=$(curl --connect-timeout 2 -m 5 -fsS "${RCI_URL}/ip/hotspot/host" 2>/dev/null)
+    [ -n "$conf" ] || conf="[]"
     seg=$(running_config | sed -n 's/^[[:space:]]*policy \(Bridge0\|Home\) \([A-Za-z0-9]*\).*/\2/p' | head -n 1)
     hs=$(rci_get "show/ip/hotspot")
+    [ -z "$hs" ] && [ -n "$RCI_TOKEN_VAL" ] && hs=$(curl --connect-timeout 2 -m 5 -fsS "${RCI_URL}/show/ip/hotspot" 2>/dev/null)
     arp=$(rci_get "show/ip/arp")
+    [ -z "$arp" ] && [ -n "$RCI_TOKEN_VAL" ] && arp=$(curl --connect-timeout 2 -m 5 -fsS "${RCI_URL}/show/ip/arp" 2>/dev/null)
 
     # Основной список — известные устройства роутера (show ip hotspot). Если их нет,
     # добираем активные из ARP (без имён — только mac/ip), чтобы вкладка не была пустой.
