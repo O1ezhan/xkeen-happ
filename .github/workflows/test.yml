@@ -19,3 +19,6 @@ jobs:
 
       - name: Тесты парсера подписок
         run: sh scripts/test-parser.sh
+
+      - name: Тесты профилей подписок
+        run: sh scripts/test-profiles.sh
