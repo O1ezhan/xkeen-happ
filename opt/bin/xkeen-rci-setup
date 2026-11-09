@@ -299,6 +299,14 @@ list_devices() {
           | map({mac: (.mac // .ip // ""), ip: (.ip // .address // ""), active: true})
           | map(select(.mac != "" and .ip != ""))' 2>/dev/null || echo "[]")
     fi
+    # Если и ARP пуст (например, RCI без arp) — берём зарегистрированные устройства из
+    # конфигурации hotspot (ip hotspot host): у них известны MAC и политика, но нет ip/имени.
+    if [ "$(printf '%s' "$hosts" | jq 'length' 2>/dev/null || echo 0)" = "0" ]; then
+        hosts=$(printf '%s' "$conf" | jq -c '
+          (if type == "array" then . else [] end)
+          | map(select((.mac // "") != ""))
+          | map({mac, ip: "", active: false, name: (.name // "")})' 2>/dev/null || echo "[]")
+    fi
 
     printf '%s' "$hosts" | jq -c         --argjson conf "$conf" --arg xk "$xk" --arg dr "$dr" --arg seg "$seg" '
         ($conf | if type == "array" then . else [] end | map({(.mac): .}) | add // {}) as $c

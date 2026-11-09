@@ -472,9 +472,18 @@ import_settings() {
     data=$(cat)
     printf '%s' "$data" | jq -e '.xkeen_happ_export == 1 and (.config | type) == "object"' >/dev/null 2>&1 \
         || { echo "Это не файл настроек XKeen Happ" >&2; return 2; }
+    # Профили подписок сохраняем отдельно: save-config принимает только «активные» поля
+    # и отбросил бы profiles/active_profile из файла настроек.
+    prof=$(printf '%s' "$data" | jq -c '.config.profiles // empty' 2>/dev/null)
+    active=$(printf '%s' "$data" | jq -r '.config.active_profile // empty' 2>/dev/null)
     printf '%s' "$data" | jq -c '.config' | "$OPT_DIR/bin/xkeen-sub" save-config
     rc=$?
     [ "$rc" -ge 2 ] && return 2
+    if [ -n "$prof" ]; then
+        jq -c --argjson p "$prof" --arg a "$active" \
+            '.profiles = $p | if $a != "" then .active_profile = $a else . end' \
+            "$CONFIG_FILE" > "$CONFIG_FILE.tmp.$$" && mv "$CONFIG_FILE.tmp.$$" "$CONFIG_FILE"
+    fi
     printf '%s' "$data" | jq -r '.devices[]? | "\(.mac) \(.mode)"' | while read -r mac mode; do
         "$OPT_DIR/bin/xkeen-rci-setup" device-set "$mac" "$mode" >/dev/null 2>&1
     done
