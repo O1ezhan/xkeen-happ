@@ -47,6 +47,18 @@ send() {
     exit 0
 }
 
+# Отдача текста (CSV) с заголовком скачивания
+send_csv() {
+    # send_csv <http-статус> <тело>
+    printf 'Status: %s\r\n' "$1"
+    printf 'Content-Type: text/csv; charset=utf-8\r\n'
+    printf 'Content-Disposition: attachment; filename="xkeen-happ-analytics.csv"\r\n'
+    printf 'Cache-Control: no-store\r\n'
+    printf 'X-Content-Type-Options: nosniff\r\n'
+    printf '\r\n%s\n' "$2"
+    exit 0
+}
+
 fail() {
     # fail <http-статус> <сообщение>
     send "$1" "$(jq -n --arg m "$2" '{ok: false, message: $m}')"
@@ -88,6 +100,29 @@ if [ "$method" = "POST" ]; then
 fi
 
 field() { printf '%s' "$body" | jq -r --arg k "$1" '.[$k] // "" | tostring'; }
+
+# --- Защита логина от перебора (по IP клиента) -----------------------------------
+client_ip="${REMOTE_ADDR:-unknown}"
+fail_key=$(printf '%s' "$client_ip" | sha256 | cut -c1-32)
+fail_file="$SESS_DIR/fail_$fail_key"
+LOGIN_MAX_FAIL=8
+LOGIN_WINDOW=600
+
+login_throttled() {
+    [ -f "$fail_file" ] || return 1
+    cnt=$(awk '{print $1}' "$fail_file" 2>/dev/null || echo 0)
+    ts=$(awk '{print $2}' "$fail_file" 2>/dev/null || echo 0)
+    now=$(date +%s)
+    [ $((now - ts)) -lt "$LOGIN_WINDOW" ] && [ "$cnt" -ge "$LOGIN_MAX_FAIL" ]
+}
+record_fail() {
+    now=$(date +%s)
+    cnt=$(awk '{print $1}' "$fail_file" 2>/dev/null || echo 0)
+    ts=$(awk '{print $2}' "$fail_file" 2>/dev/null || echo "$now")
+    [ $((now - ts)) -ge "$LOGIN_WINDOW" ] && cnt=0
+    printf '%s %s\n' "$((cnt + 1))" "$now" > "$fail_file"
+}
+clear_fail() { rm -f "$fail_file"; }
 
 # --- Сессии -------------------------------------------------------------------
 cookie_token=$(printf '%s' "${HTTP_COOKIE:-}" | tr ';' '\n' | sed -n 's/^[[:space:]]*xh_session=\([0-9a-f]\{64\}\)[[:space:]]*$/\1/p' | head -n 1)
@@ -170,10 +205,13 @@ case "$action" in
     login)
         [ "$method" = "POST" ] || fail "405 Method Not Allowed" "Нужен POST"
         auth_configured || fail "409 Conflict" "Сначала задайте пароль"
+        login_throttled && fail "429 Too Many Requests" "Слишком много попыток — подождите несколько минут"
         if check_password "$(field password)"; then
+            clear_fail
             new_session
             send "200 OK" '{"ok":true}'
         fi
+        record_fail
         sleep 2
         fail "401 Unauthorized" "Неверный пароль"
         ;;
@@ -320,6 +358,29 @@ case "$action" in
         out=$("$CTL" analytics "$days" 2>/dev/null)
         printf '%s' "$out" | jq -e 'type == "object"' >/dev/null 2>&1 || fail "503 Service Unavailable" "Не удалось прочитать данные аналитики"
         send "200 OK" "$(printf '%s' "$out" | jq -c '. + {ok: true}')"
+        ;;
+
+    analytics-csv)
+        days=$(printf '%s' "${QUERY_STRING:-}" | sed -n 's/^\(.*&\)\{0,1\}days=\([0-9]*\).*/\2/p')
+        case "$days" in 1|7|30) ;; *) days=1 ;; esac
+        out=$("$CTL" analytics "$days" 2>/dev/null)
+        printf '%s' "$out" | jq -e 'type == "object"' >/dev/null 2>&1 || fail "503 Service Unavailable" "Не удалось прочитать данные аналитики"
+        csv=$(printf '%s' "$out" | jq -r '
+          "# xkeen-happ analytics, days=\(.days) (ts_unix — секунды с 1970)",
+          "# speed",
+          "ts_unix,server,avg_kbps,count,zero",
+          (.speed[]? | [.[0], .[1], .[2], .[3], .[4]] | @csv),
+          "# health",
+          "ts_unix,checks,ok,off,avg_ms,node",
+          (.health[]? | [.[0], .[1], .[2], .[3], .[4], .[5]] | @csv),
+          "# traffic",
+          "ts_unix,server,up_bytes,down_bytes",
+          (.traffic[]? | [.[0], .[1], .[2], .[3]] | @csv),
+          "# events",
+          "ts_unix,type,text",
+          (.events[]? | [.[0], .[1], .[2]] | @csv)
+        ' 2>/dev/null)
+        send_csv "200 OK" "$csv"
         ;;
 
     killswitch)

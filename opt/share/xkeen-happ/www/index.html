@@ -487,8 +487,11 @@ html.alps .seg button[aria-pressed="true"] { background: #fff; }
     <section data-page="analytics" hidden>
       <div class="page-head">
         <div><h1>Аналитика</h1><p id="anSub">Как работали VPN и серверы.</p></div>
-        <div class="seg" role="group" aria-label="Период">
-          <button data-days="1" aria-pressed="true">Сутки</button><button data-days="7" aria-pressed="false">Неделя</button><button data-days="30" aria-pressed="false">Месяц</button>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+          <div class="seg" role="group" aria-label="Период">
+            <button data-days="1" aria-pressed="true">Сутки</button><button data-days="7" aria-pressed="false">Неделя</button><button data-days="30" aria-pressed="false">Месяц</button>
+          </div>
+          <button class="btn" onclick="downloadAnalyticsCsv()">Скачать CSV</button>
         </div>
       </div>
 
@@ -1135,6 +1138,27 @@ async function loadAnalytics() {
     const d = await api('analytics&days=' + anDays, {});
     if (!d.ok) { toast(d.message || 'Нет данных'); return; }
     A = d; renderAnalytics();
+  } catch (e) { quiet(e); }
+}
+
+async function downloadAnalyticsCsv() {
+  try {
+    const res = await fetch('/cgi-bin/api.cgi?action=analytics-csv&days=' + anDays, {
+      credentials: 'same-origin', method: 'POST',
+      headers: { 'X-Requested-With': 'xkeen-happ', 'Content-Type': 'application/json' },
+      body: '{}'
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      toast(d.message || 'Не удалось скачать CSV');
+      return;
+    }
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'xkeen-happ-analytics.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   } catch (e) { quiet(e); }
 }
 
