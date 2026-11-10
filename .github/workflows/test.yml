@@ -22,3 +22,6 @@ jobs:
 
       - name: Тесты профилей подписок
         run: sh scripts/test-profiles.sh
+
+      - name: Тесты вкладки «Устройства»
+        run: sh scripts/test-devices.sh
