@@ -75,6 +75,28 @@ run "hy2: protocol (xray)" "$HY2" '.outbounds[0].protocol' 'hysteria'
 run "hy2: protocol" "$HY2" '.servers[0].protocol' 'hysteria2'
 run "hy2: имя"      "$HY2" '.servers[0].name' 'Hy2-Test'
 
+# --- hysteria2 + obfs salamander (формат FieldMind/3x-ui) ---
+HY2_OBFS='hysteria2://auth123@example.com:443?alpn=h3&fp=firefox&obfs=salamander&obfs-password=deadbeef&security=tls&sni=example.com#Hy2-Obfs'
+run "hy2 obfs: protocol (xray)"    "$HY2_OBFS" '.outbounds[0].protocol' 'hysteria'
+run "hy2 obfs: auth"               "$HY2_OBFS" '.outbounds[0].streamSettings.hysteriaSettings.auth' 'auth123'
+run "hy2 obfs: version"            "$HY2_OBFS" '.outbounds[0].streamSettings.hysteriaSettings.version' '2'
+run "hy2 obfs: udpIdleTimeout"     "$HY2_OBFS" '.outbounds[0].streamSettings.hysteriaSettings.udpIdleTimeout' '60'
+run "hy2 obfs: finalmask type"     "$HY2_OBFS" '.outbounds[0].streamSettings.finalmask.udp[0].type' 'salamander'
+run "hy2 obfs: finalmask password" "$HY2_OBFS" '.outbounds[0].streamSettings.finalmask.udp[0].settings.password' 'deadbeef'
+run "hy2 obfs: alpn"               "$HY2_OBFS" '.outbounds[0].streamSettings.tlsSettings.alpn[0]' 'h3'
+run "hy2 obfs: sni"                "$HY2_OBFS" '.outbounds[0].streamSettings.tlsSettings.serverName' 'example.com'
+run "hy2 obfs: fingerprint"        "$HY2_OBFS" '.outbounds[0].streamSettings.tlsSettings.fingerprint' 'firefox'
+run "hy2 без obfs: нет finalmask"  "$HY2"      '.outbounds[0].streamSettings.finalmask' 'null'
+HY2_NOALPN='hysteria2://p@example.com:443?security=tls&sni=example.com#H'
+run "hy2: alpn по умолчанию"       "$HY2_NOALPN" '.outbounds[0].streamSettings.tlsSettings.alpn[0]' 'h3'
+
+# --- shadowsocks 2022 (мультиюзер, SIP022) ---
+SS22='ss://2022-blake3-aes-128-gcm:eArOeCQP1j%2FYgd00mWvyKg%3D%3D:%2FipnfzHeZVPaAxyZlgNrtA%3D%3D@example.com:24445?type=tcp#SS2022'
+run "ss2022: protocol"          "$SS22" '.outbounds[0].protocol' 'shadowsocks'
+run "ss2022: method"            "$SS22" '.outbounds[0].settings.method' '2022-blake3-aes-128-gcm'
+run "ss2022: server:user PSK"   "$SS22" '.outbounds[0].settings.password' 'eArOeCQP1j/Ygd00mWvyKg==:/ipnfzHeZVPaAxyZlgNrtA=='
+run "ss2022: имя"               "$SS22" '.servers[0].name' 'SS2022'
+
 # --- xhttp (splithttp) ---
 XHTTP='vless://uuid@example.com:443?type=splithttp&security=tls&sni=example.com&host=example.com&path=%2Fxhttp#XHTTP-Test'
 run "xhttp: network" "$XHTTP" '.outbounds[0].streamSettings.network' 'xhttp'

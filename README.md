@@ -81,7 +81,7 @@ curl -fsSL https://github.com/O1ezhan/xkeen-happ/releases/latest/download/instal
 
 **Обслуживание без консоли:** обновление XKeen, Xray, баз сайтов и самой панели кнопкой; kill switch; диагностика одной кнопкой с отчётом, который удобно отправить в поддержку; перенос всех настроек на другой роутер одним файлом.
 
-**Подписки как в Happ:** ссылки `https://` (Base64 или текст), трафик и срок подписки, сообщения сервиса, привязка по устройству (HWID). Протоколы VLESS (Reality, TLS, Vision), VMess, Trojan, Shadowsocks, Hysteria2 (если её поддерживает установленный Xray); транспорты xHTTP, WebSocket, gRPC, TCP, HTTPUpgrade.
+**Подписки как в Happ:** ссылки `https://` (Base64 или текст), трафик и срок подписки, сообщения сервиса, привязка по устройству (HWID). Протоколы VLESS (Reality, TLS, Vision), VMess, Trojan, Shadowsocks (включая SS-2022), Hysteria2 — с обфускацией `salamander` (`obfs=salamander&obfs-password=...`) при поддержке установленным Xray; транспорты xHTTP, WebSocket, gRPC, TCP, HTTPUpgrade. Hysteria2 работает по UDP/QUIC: в панели у неё нет TCP-пинга (показывается «—»), а доступность видна по реальному трафику и балансировщику.
 
 <p>
 <img src="docs/devices-phone.png" alt="Устройства" width="31%">

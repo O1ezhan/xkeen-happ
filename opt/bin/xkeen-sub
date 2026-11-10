@@ -616,12 +616,26 @@ parse_uris_to_json() {
         }]
       elif $item._kind == "hysteria2" then
         ($item.params + { security: ($item.params.security // "tls") }) as $p |
-        (build_stream("hysteria"; $p) * {
-          hysteriaSettings: {
-            auth: $item.user,
-            version: 2
-          }
-        }) as $ss |
+        (build_stream("hysteria"; $p)
+          | .hysteriaSettings = {
+              auth: (if $item.user != "" then $item.user else ($p.auth // "") end),
+              version: 2,
+              udpIdleTimeout: (($p["udp-idle-timeout"] // $p["udp_idle_timeout"] // 60) | tonumber? // 60)
+            }
+          | if (($p.obfs // "") == "salamander") and (($p["obfs-password"] // $p["obfs_password"] // "") != "")
+            then .finalmask = {
+              udp: [{
+                type: "salamander",
+                settings: { password: ($p["obfs-password"] // $p["obfs_password"]) }
+              }]
+            }
+            else .
+            end
+          | if (((.tlsSettings // {}) | .alpn) == null)
+            then .tlsSettings = ((.tlsSettings // {}) + { alpn: ["h3"] })
+            else .
+            end
+        ) as $ss |
         ({
           tag: $item.tag,
           protocol: "hysteria",
@@ -1013,33 +1027,48 @@ ping_all_servers() {
     count=$(jq '.servers | length' "$STATE_FILE" 2>/dev/null || echo 0)
     [ "${count:-0}" -gt 0 ] || return 0
 
-    # Время TCP-соединения до каждого сервера, все замеры параллельно (не дольше ~3 с)
+    # TCP-задержка до каждого сервера (параллельно). Hysteria2 работает по UDP/QUIC:
+    # TCP-коннект к её порту недостоверен, поэтому такие серверы помечаем «udp»
+    # (ping_ms = null, alive = true — доступность видна по реальному трафику Xray/балансировщика).
     ping_dir="/tmp/xkeen-happ-ping.$$"
     mkdir -p "$ping_dir"
-    jq -r '.servers[] | "\(.address) \(.port)"' "$STATE_FILE" | {
+    jq -r '.servers[] | "\(.protocol)\t\(.address)\t\(.port)"' "$STATE_FILE" | {
         i=0
-        while read -r addr port; do
+        while IFS="$(printf '\t')" read -r proto addr port; do
             case "$addr" in *:*) host="[$addr]" ;; *) host="$addr" ;; esac
-            (curl -g -sS -o /dev/null --connect-timeout 2 -m 3 -w '%{time_connect}' "http://${host}:${port}" \
-                > "$ping_dir/$i" 2>/dev/null) &
+            if [ "$proto" = "hysteria2" ]; then
+                printf 'udp' > "$ping_dir/$i"
+            else
+                (curl -g -sS -o /dev/null --connect-timeout 2 -m 3 -w '%{time_connect}' "http://${host}:${port}" \
+                    > "$ping_dir/$i" 2>/dev/null) &
+            fi
             i=$((i + 1))
         done
         wait
     }
 
     pings="["
+    udps="["
     i=0
     while [ "$i" -lt "$count" ]; do
-        ms=$(awk '{ ms = int($1 * 1000 + 0.5); print (ms > 0 ? ms : "null") }' "$ping_dir/$i" 2>/dev/null)
-        [ -z "$ms" ] && ms="null"
-        [ "$i" -gt 0 ] && pings="$pings,"
+        if [ "$(cat "$ping_dir/$i" 2>/dev/null)" = "udp" ]; then
+            ms="null"; is_udp="true"
+        else
+            ms=$(awk '{ ms = int($1 * 1000 + 0.5); print (ms > 0 ? ms : "null") }' "$ping_dir/$i" 2>/dev/null)
+            [ -z "$ms" ] && ms="null"
+            is_udp="false"
+        fi
+        [ "$i" -gt 0 ] && { pings="$pings,"; udps="$udps,"; }
         pings="$pings$ms"
+        udps="$udps$is_udp"
         i=$((i + 1))
     done
     pings="$pings]"
+    udps="$udps]"
     rm -rf "$ping_dir"
 
-    jq --argjson p "$pings" '.servers |= [to_entries[] | .value + {ping_ms: $p[.key], alive: ($p[.key] != null)}]' \
+    jq --argjson p "$pings" --argjson u "$udps" \
+        '.servers |= [to_entries[] | .value + (if $u[.key] then {ping_ms: null, alive: true} else {ping_ms: $p[.key], alive: ($p[.key] != null)} end)]' \
         "$STATE_FILE" > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
 }
 

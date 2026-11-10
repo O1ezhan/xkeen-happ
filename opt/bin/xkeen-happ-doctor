@@ -161,9 +161,13 @@ else
 fi
 
 if [ -s "$st" ]; then
-    total=$(jq '.servers | length' "$st")
+    # TCP-проверка применима только к TCP-серверам: Hysteria2 живёт на UDP/QUIC,
+    # её доступность проверяется реальным трафиком Xray (см. вкладку «Серверы»/балансировщик).
+    hy2=$(jq '[.servers[] | select(.protocol == "hysteria2")] | length' "$st" 2>/dev/null || echo 0)
     alive=0
-    for hp in $(jq -r '.servers[] | "\(.address)|\(.port)"' "$st" | head -n 10); do
+    checked=0
+    for hp in $(jq -r '.servers[] | select(.protocol != "hysteria2") | "\(.address)|\(.port)"' "$st" | head -n 10); do
+        checked=$((checked + 1))
         h="${hp%|*}"; p="${hp#*|}"
         case "$h" in *:*) h="[$h]" ;; esac
         curl -g -s -o /dev/null --connect-timeout 3 -m 4 "http://$h:$p" 2>/dev/null
@@ -171,10 +175,12 @@ if [ -s "$st" ]; then
         # 0, 52 (пустой ответ), 56 (сброс после соединения) — порт открыт
         case "$rc" in 0|52|56|35|8) alive=$((alive + 1)) ;; esac
     done
-    checked=$(( total < 10 ? total : 10 ))
     if [ "$checked" -eq 0 ]; then :
     elif [ "$alive" -gt 0 ]; then res ok "Серверы подписки" "TCP-порт открыт у $alive из $checked"
-    else res fail "Серверы подписки" "ни один из $checked не отвечает — блокировка у провайдера или серверы недоступны"; fi
+    else res fail "Серверы подписки" "ни один из $checked TCP-серверов не отвечает — блокировка у провайдера или серверы недоступны"; fi
+    if [ "${hy2:-0}" -gt 0 ]; then
+        res info "Hysteria2 (UDP/QUIC)" "$hy2 серв. — TCP-проверка не применяется, доступность смотрите по реальному трафику"
+    fi
 fi
 
 res info "Проверка с устройства" "откройте 2ip.ru с телефона в Wi-Fi: должен быть IP VPN-сервера"
