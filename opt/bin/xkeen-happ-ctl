@@ -2,6 +2,7 @@
 # ==============================================================================
 # xkeen-happ-ctl — служебные команды панели XKeen Happ:
 #   health                       — проверить, что трафик реально идёт через VPN
+#   probe-servers                — проверить каждый сервер по отдельности (JSON: alive/dead)
 #   good-save | rollback         — запомнить рабочий конфиг Xray / вернуть его
 #   notify "текст"               — сообщение в Telegram (если настроено)
 #   notify-test | find-chat      — проверка бота / найти chat_id по последнему сообщению боту
@@ -31,6 +32,9 @@ TASK_LOG="$OPT_DIR/var/log/xkeen-happ-task.log"
 HAPP_LOG="$OPT_DIR/var/log/xkeen-happ.log"
 XKEEN="$OPT_DIR/sbin/xkeen"
 CHECK_PORT=10811
+XRAY="$OPT_DIR/sbin/xray"
+PROBE_PORT_BASE=10901
+PROBE_TIMEOUT=6
 OUR_FILES="04_outbounds.json 05_routing.json 07_observatory.json 08_happ_check.json"
 XKEEN_URL="https://github.com/jameszeroX/XKeen/releases/latest/download/xkeen.tar.gz"
 PANEL_URL_DEFAULT="https://github.com/@REPO@/releases/latest/download/install.sh"
@@ -65,6 +69,72 @@ health() {
         sleep 3
     done
     return 1
+}
+
+# Проверка каждого сервера по отдельности: поднимаем временный Xray с socks-входом
+# на каждый outbound и параллельно гоняем через них тестовый запрос. Нужна, чтобы при
+# сбое health понять, какие именно серверы не пропускают трафик, и исключить только их
+# (а не откатывать весь конфиг из-за одного мёртвого сервера).
+# Печатает JSON: {"alive":[tag...],"dead":[tag...],"details":{"tag":{"code":"204","ms":123}}}
+probe_servers() {
+    src="$XRAY_CONF_DIR/04_outbounds.json"
+    [ -x "$XRAY" ] || return 1
+    [ -s "$src" ] || { printf '%s\n' '{"alive":[],"dead":[],"details":{}}'; return 1; }
+    tmp="$OPT_DIR/tmp/xkeen-happ-probe.$$"
+    rm -rf "$tmp"; mkdir -p "$tmp"
+    jq -r '.outbounds[] | select(.tag != "direct" and .tag != "block") | .tag' "$src" 2>/dev/null > "$tmp/tags"
+    n=$(wc -l < "$tmp/tags" | tr -d ' ')
+    if [ "${n:-0}" -eq 0 ]; then rm -rf "$tmp"; printf '%s\n' '{"alive":[],"dead":[],"details":{}}'; return 1; fi
+    jq --argjson base "$PROBE_PORT_BASE" '
+      (.outbounds | map(select(.tag != "direct" and .tag != "block"))) as $o |
+      ($o | map(.tag)) as $names |
+      ($names | to_entries | map({tag: ("probe-" + (.key|tostring)), listen: "127.0.0.1",
+          port: ($base + .key), protocol: "socks", settings: {udp: false}})) as $ins |
+      ($names | to_entries | map({type: "field", inboundTag: ["probe-" + (.key|tostring)],
+          outboundTag: .value})) as $rules |
+      {log: {loglevel: "error"}, inbounds: $ins,
+       outbounds: ($o + [{tag: "direct", protocol: "freedom"}]),
+       routing: {domainStrategy: "AsIs", rules: $rules}}
+    ' "$src" > "$tmp/probe.json" 2>/dev/null
+    if [ ! -s "$tmp/probe.json" ]; then rm -rf "$tmp"; printf '%s\n' '{"alive":[],"dead":[],"details":{}}'; return 1; fi
+    XRAY_LOCATION_ASSET="$OPT_DIR/etc/xray/dat" "$XRAY" run -c "$tmp/probe.json" > "$tmp/xray.log" 2>&1 &
+    xpid=$!
+    i=0
+    while [ "$i" -lt 20 ]; do
+        netstat -tln 2>/dev/null | grep -q "127.0.0.1:$PROBE_PORT_BASE " && break
+        sleep 1; i=$((i + 1))
+    done
+    if ! netstat -tln 2>/dev/null | grep -q "127.0.0.1:$PROBE_PORT_BASE "; then
+        kill "$xpid" 2>/dev/null; wait "$xpid" 2>/dev/null; rm -rf "$tmp"
+        printf '%s\n' '{"alive":[],"dead":[],"details":{}}'; return 1
+    fi
+    pids=""
+    i=0
+    while read -r tag; do
+        port=$((PROBE_PORT_BASE + i))
+        { curl -s -o /dev/null -m "$PROBE_TIMEOUT" -w '%{http_code} %{time_total}' \
+              -x "socks5h://127.0.0.1:$port" https://www.gstatic.com/generate_204 2>/dev/null > "$tmp/$i.res"; } &
+        pids="$pids $!"
+        i=$((i + 1))
+    done < "$tmp/tags"
+    for p in $pids; do wait "$p" 2>/dev/null; done
+    kill "$xpid" 2>/dev/null; wait "$xpid" 2>/dev/null
+    out='{"alive":[],"dead":[],"details":{}}'
+    i=0
+    while read -r tag; do
+        res=$(cat "$tmp/$i.res" 2>/dev/null)
+        code=${res%% *}
+        t=${res#* }
+        [ "$t" = "$res" ] && t=""
+        ms=$(printf '%s' "$t" | awk '{ printf "%d", $1 * 1000 }' 2>/dev/null)
+        [ -n "$ms" ] || ms=null
+        ok=false; [ "$code" = "204" ] && ok=true
+        out=$(printf '%s' "$out" | jq --arg tag "$tag" --arg code "${code:-err}" --argjson ms "${ms:-null}" --argjson ok "$ok" \
+            '.details[$tag] = {code: $code, ms: $ms} | if $ok then .alive += [$tag] else .dead += [$tag] end' 2>/dev/null)
+        i=$((i + 1))
+    done < "$tmp/tags"
+    rm -rf "$tmp"
+    printf '%s\n' "$out"
 }
 
 # XKeen 2.1 перезапускает Xray в фоне: ждём, пока он реально поднимется, иначе
@@ -492,6 +562,7 @@ import_settings() {
 
 case "${1:-}" in
     health)       health; rc=$?; [ "$rc" = 0 ] && echo ok || echo fail; exit $rc ;;
+    probe-servers) probe_servers ;;
     good-save)    good_save ;;
     rollback)     rollback ;;
     notify)       notify "$2" ;;

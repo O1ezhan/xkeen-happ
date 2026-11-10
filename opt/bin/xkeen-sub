@@ -1252,6 +1252,42 @@ restart_xkeen_if_available() {
         fi
         return 0
     fi
+    # Проверка не прошла. Возможно, дело в одном-двух мёртвых серверах: проверяем каждый
+    # по отдельности и исключаем недоступные, не откатывая весь конфиг из-за них.
+    log_msg "Проверка VPN не пройдена — проверяю серверы по отдельности"
+    probe=$("$ctl" probe-servers 2>/dev/null)
+    alive=$(printf '%s' "$probe" | jq -r '.alive | length' 2>/dev/null || echo 0)
+    deadn=$(printf '%s' "$probe" | jq -r '.dead | length' 2>/dev/null || echo 0)
+    if [ "${alive:-0}" -gt 0 ] && [ "${deadn:-0}" -gt 0 ]; then
+        dead_tags=$(printf '%s' "$probe" | jq -c '.dead')
+        dead_names=$(jq -r --argjson dead "$dead_tags" '[.servers[] | select(.tag as $t | $dead | index($t) != null) | .name] | join(", ")' "$STATE_FILE" 2>/dev/null)
+        [ -n "$dead_names" ] || dead_names=$(printf '%s' "$probe" | jq -r '.dead | join(", ")')
+        log_msg "Не пропускают трафик ($deadn): $dead_names — исключаю и пересобираю конфиг"
+        jq --argjson dead "$dead_tags" '.outbounds |= map(select(.tag as $t | $dead | index($t) == null))' \
+            "$OUTBOUNDS_FILE" > "$OUTBOUNDS_FILE.tmp.$$" && mv "$OUTBOUNDS_FILE.tmp.$$" "$OUTBOUNDS_FILE"
+        sel=$(jq -r '.selected_tag // "proxy-1"' "$CONFIG_FILE" 2>/dev/null)
+        if printf '%s' "$probe" | jq -e --arg t "$sel" '.dead | index($t) != null' >/dev/null 2>&1; then
+            newsel=$(printf '%s' "$probe" | jq -r '.alive[0]')
+            jq --arg t "$newsel" '.selected_tag = $t' "$CONFIG_FILE" > "$CONFIG_FILE.tmp.$$" && mv "$CONFIG_FILE.tmp.$$" "$CONFIG_FILE"
+            log_msg "Выбранный сервер $sel не работает — переключаюсь на $newsel"
+        fi
+        if apply_xray_configs "" >/dev/null 2>&1; then
+            "$ctl" restart
+            if "$ctl" health >/dev/null 2>&1; then
+                "$ctl" good-save
+                log_msg "Проверка VPN пройдена после исключения недоступных серверов"
+                jq --arg e "Часть серверов недоступна и исключена: $dead_names. VPN работает." \
+                   --argjson dead "$dead_tags" '.last_error = $e | .dead_servers = $dead' "$STATE_FILE" > "$STATE_FILE.tmp.$$" && mv "$STATE_FILE.tmp.$$" "$STATE_FILE"
+                "$ctl" notify "⚠️ Серверы недоступны и исключены: $dead_names. VPN работает." >/dev/null 2>&1
+                return 0
+            fi
+            log_msg "После исключения мёртвых серверов трафик всё равно не идёт — откатываю конфиг"
+        else
+            log_msg "Не удалось пересобрать конфиг без мёртвых серверов — откатываю конфиг"
+        fi
+    else
+        log_msg "Проверка VPN: ни один сервер не пропускает трафик (или Xray не поднялся)"
+    fi
     if [ -f "$HAPP_CONF_DIR/good/.saved" ]; then
         log_msg "Проверка VPN не пройдена — возвращаю рабочий конфиг"
         "$ctl" rollback
