@@ -796,8 +796,11 @@ INNER_OBS
                   "spotify.com", "scdn.co", "spotifycdn.com", "twitch.tv", "ttvnw.net", "jtvnw.net", "soundcloud.com", "sndcdn.com", "disneyplus.com"],
       tiktok: ["tiktok.com", "tiktokv.com", "tiktokv.eu", "tiktokv.us", "tiktokvapp.com", "tiktokapis.com",
                "tiktokcdn.com", "tiktokcdn-us.com", "tiktokcdn-eu.com", "tiktokcdn-in.com", "tiktokrow-cdn.com",
-               "ttwstatic.com", "ttlstatic.com", "ttwebview.com", "tiktokstaticb.com",
-               "muscdn.com", "musical.ly", "ibytedtos.com", "byteoversea.com", "byteoversea.net",
+               "ttwstatic.com", "ttlstatic.com", "ttwebview.com", "tiktokstaticb.com", "ttlivecdn.com",
+               "muscdn.com", "musical.ly", "ibytedtos.com", "ibyteimg.com", "byteimg.com", "byteoversea.com",
+               "byteoversea.net", "bytedance.com", "bytedance.net", "pstatp.com",
+               "snssdk.com", "isnssdk.com", "sgsnssdk.com", "bytelemon.com", "byteicdn.com",
+               "byteintlapi.com", "byteintl.net", "bytehwm-row.com", "bytevcloudapi.com",
                "zhiliaoapp.com", "tiktokw.us", "tiktokw.eu", "tiktok.ru"]
     } as $preset_map |
     ([$presets[] | $preset_map[.] // [] | .[] | "domain:" + .]) as $preset_doms |
@@ -811,6 +814,17 @@ INNER_OBS
         type: "field",
         inboundTag: ["force-proxy-redirect", "force-proxy-tproxy", "happ-check"]
       } + vpn_target),
+
+      # Набор «TikTok»: принудительно отключаем QUIC (UDP/443) — приложение уходит на TCP,
+      # который надёжно идёт через тоннель; иначе часть запросов уходит напрямую и лента
+      # «отваливается» с ошибкой сети.
+      (if ($presets | index("tiktok")) != null then {
+        type: "field",
+        inboundTag: ["redirect", "tproxy"],
+        outboundTag: "block",
+        network: "udp",
+        port: "443"
+      } else empty end),
 
       {
         type: "field",
