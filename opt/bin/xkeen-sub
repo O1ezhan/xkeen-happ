@@ -1361,7 +1361,7 @@ save_config() {
             elif ($k == "selected_tag") then (if ($v | str(32)) and ($v | startswith("proxy-")) and ($v | ltrimstr("proxy-") | digits) then .[$k] = $v else bad($k) end)
             elif ($k == "update_cron") then (if ($v | str(64)) and ($v | cronok) then .[$k] = $v else bad($k) end)
             elif ($k == "presets") then
-              (if ($v | type) == "array" and ($v | all(. == "ai" or . == "social" or . == "games" or . == "streaming")) then .[$k] = ($v | unique) else bad($k) end)
+              (if ($v | type) == "array" and ($v | all(. == "ai" or . == "social" or . == "games" or . == "streaming" or . == "tiktok")) then .[$k] = ($v | unique) else bad($k) end)
             elif ($k == "tg_token") then
               (if ($v | str(100)) and ($v | only("0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_-" | explode)) then .[$k] = $v else bad($k) end)
             elif ($k == "tg_chat") then

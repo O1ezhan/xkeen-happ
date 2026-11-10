@@ -48,6 +48,11 @@ sh "$SUB" profile del "$id2" >/dev/null
 sh "$SUB" profile del "$id1" >/dev/null
 [ "$(sh "$SUB" profile list | jq -r '.active_profile')" = "" ] && ok "del активного: active_profile сброшен" || bad "del активного: active_profile не сброшен"
 
+# пресеты: tiktok допустим и сохраняется, неизвестный ключ отклоняется
+printf '%s' '{"presets":["ai","tiktok"]}' | sh "$SUB" save-config >/dev/null 2>&1 || true
+[ "$(jq -c '.presets' "$TMP/config.json" 2>/dev/null)" = '["ai","tiktok"]' ] && ok "presets: tiktok принят" || bad "presets: tiktok отклонён"
+if printf '%s' '{"presets":["nonsense"]}' | sh "$SUB" save-config >/dev/null 2>&1; then bad "presets: мусор принят"; else ok "presets: мусор отклонён"; fi
+
 echo
 echo "Итог: $((TOTAL - FAIL))/$TOTAL тестов пройдено."
 [ "$FAIL" -eq 0 ] || exit 1
